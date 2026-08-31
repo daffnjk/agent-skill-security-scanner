@@ -1,0 +1,1 @@
+{"name":"recipe-loader","scripts":{"postinstall":"node install.js"}}
