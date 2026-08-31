@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "detector_version": "v38",
+  "generated_at_utc": "2026-08-31T05:34:09Z",
+  "detector": {
+    "repository": "daffnjk/agent-skill-security-scanner",
+    "git_commit": "4d78e38f50a1195139827150de70406008af5b5c",
+    "main_go_sha256": "5a38f4cfd12c82f2a127025fa03e3750b09b2e480029b94f9be45e035fc831ec",
+    "micro_loop_test_sha256": "97b75abfbbe61a8fa13c11732e9a0020380949fc67ce0b5dcf9d4d511307bc2f",
+    "evaluated_executable_sha256": "e7374f41448d0f175308f81023642287f6f2274b0960e71700d89a91aecbbff5",
+    "build_platform": "darwin/arm64",
+    "go_version": "go1.27.0"
+  },
+  "evaluation": {
+    "strict_positive_verdicts": ["malicious"],
+    "screening_positive_verdicts": ["malicious", "suspicious"],
+    "global_aggregation_permitted": false,
+    "global_aggregation_reason": "Benchmark families overlap or reuse samples, and several units contain only positive samples."
+  },
+  "suites": [
+    {
+      "id": "local-malicious-skills-corpus",
+      "evaluation_units": 13,
+      "completed_units": 11,
+      "metadata_only_units": 2,
+      "scanned_samples": 63707,
+      "detector_elapsed_seconds": 609.283995,
+      "source_revisions_sha256": "e486f1fa9945221d4cfedf0bdb227d839f32964d0ddc3258d60b9430b42787a9",
+      "source_registry_sha256": "b5df4e16a6d91a519deee8c5f57e36ed0dbaeccf020b592ea71786ade5ae9795",
+      "local_summary_csv_sha256": "bc7fe93870f74fdfc60b6bef055d01f3f3c4784aab4592534b4f0347c5ca0b4e",
+      "local_summary_json_sha256": "90faf908bcb40f4e852c5b63f6d911ccb86539b45aa87b39fa765ae77a37fe73"
+    },
+    {
+      "id": "PoisonedSkills",
+      "repository": "qyb156/PoisonedSkills",
+      "git_commit": "5068b39ff85c5e9a3afdb856a53b85867043c923",
+      "dataset_content_sha256": "545a9ee1f67523f8300bc1d86ab5b95e3b9ca6e7423d32e4f82ffcdd88e73905",
+      "scanned_samples": 1070,
+      "detector_elapsed_seconds": 2.193401,
+      "local_summary_csv_sha256": "a3bebd9f37113d2801385cd3120eabbe4a77e3589c3662bc13d775ecfc35ba62",
+      "local_summary_json_sha256": "75f3477629e2ea9b7d8e4cf5da395c5b881814c406b4a8a97757b94eb02b0656"
+    }
+  ],
+  "safety": "Static scan only. No corpus skill, helper script, PoC, URL, harness, or dataset dependency was executed."
+}

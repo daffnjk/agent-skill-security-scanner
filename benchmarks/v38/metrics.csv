@@ -1,0 +1,15 @@
+version,suite,dataset_id,status,expected_samples,scanned_samples,coverage,malicious,suspicious,benign,strict_precision,strict_recall,strict_f1,strict_f2,screen_precision,screen_recall,screen_f1,screen_f2,precision_applicable,elapsed_seconds,source_revision
+v38,local-malicious-skills-corpus,malicious_skill_bench_full_text,completed,9740,9740,1.0,4406,336,4998,0.834544,0.48994,0.617412,0.534044,0.833193,0.526449,0.645219,0.568293,true,53.796291,d4b42ce5766a6e0359c987cf59c1007cb3795a90
+v38,local-malicious-skills-corpus,malicious_skill_bench_packages,completed,7505,7505,1.0,6176,183,1146,1.0,0.822918,0.902858,0.853133,1.0,0.847302,0.91734,0.873993,false,146.228366,893afd609be22a2dfac5a2b94bbebb4eeb99515e
+v38,local-malicious-skills-corpus,malicious_agent_skills_bench,not_scannable_metadata_only,98380,0,0.0,0,0,0,,,,,,,,,false,0.0,f7d28b1a9de4eb33d552529cf79d1065d765f6c3
+v38,local-malicious-skills-corpus,skilltrustbench,completed,5520,5520,1.0,4666,121,733,0.735216,0.964024,0.834215,0.907536,0.729912,0.983584,0.837971,0.91966,true,170.21452,f90517b7058fdcfea89af114c069fbf973f42bc7
+v38,local-malicious-skills-corpus,skillbench_1650,completed,1650,1650,1.0,703,58,889,0.200569,0.94,0.330598,0.541059,0.185283,0.94,0.30955,0.518001,true,21.399938,68c0d4bf857f48e5fa4f3baa4613f0c0980a7fb2
+v38,local-malicious-skills-corpus,agent_skill_malware,completed,347,347,1.0,170,4,173,0.711765,0.975806,0.823129,0.908408,0.695402,0.975806,0.812081,0.902985,true,1.995846,5cff435ddab2cc34261875885de9ac50d40393ec
+v38,local-malicious-skills-corpus,atr_skill_benchmark,completed,498,498,1.0,226,14,258,0.119469,0.84375,0.209302,0.381356,0.1125,0.84375,0.198529,0.366848,true,2.964962,7219b10d2ac077e3db8c87d43d653a67935cdb5d
+v38,local-malicious-skills-corpus,skillguard_v2,completed,30164,30164,1.0,7280,724,22160,0.328159,0.207938,0.254569,0.224378,0.304723,0.21229,0.250244,0.226001,true,118.778607,da925f6977ae4201906b441b75f9e5a0194acd76
+v38,local-malicious-skills-corpus,skillleakbench,not_scannable_metadata_only,520,0,0.0,0,0,0,,,,,,,,,false,0.0,8264436a0483e2fc1aed84b80e5fde73ea52c3ca
+v38,local-malicious-skills-corpus,malskillbench,completed,7944,7944,1.0,5471,188,2285,0.597514,0.828854,0.694424,0.769285,0.596749,0.856237,0.703322,0.78773,true,89.04104,06e083125d5ec5dd7a189dfedadfe587a70635b9
+v38,local-malicious-skills-corpus,agenttrap,completed,141,141,1.0,103,0,38,0.553398,0.626374,0.587629,0.610278,0.553398,0.626374,0.587629,0.610278,true,4.320403,613c37512d16a92731d6f145f67f735f1ced9d20
+v38,local-malicious-skills-corpus,overtly_malicious_skills,completed,4,4,1.0,1,0,3,1.0,0.25,0.4,0.294118,1.0,0.25,0.4,0.294118,false,0.052531,4ffbf9461ef0505f9ce76a0d3694a18ec33ea531
+v38,local-malicious-skills-corpus,skilllifebench_scenarios,completed,194,194,1.0,89,8,97,1.0,0.458763,0.628975,0.514451,1.0,0.5,0.666667,0.555556,false,0.491491,55fcf409d643d2740206ce4699b9a81730bce1ad
+v38,PoisonedSkills,poisoned_skills,completed,1070,1070,1.0,890,0,180,,0.831776,0.908163,0.860735,,0.831776,0.908163,0.860735,false,2.193401,5068b39ff85c5e9a3afdb856a53b85867043c923
