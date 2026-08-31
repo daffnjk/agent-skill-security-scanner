@@ -1,0 +1,25 @@
+# Opt-in v39 production candidate: compatibility wrapper + existing detector.
+FROM golang:1.23-alpine AS build
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+      go build -trimpath -ldflags="-s -w -buildid=" -o /skillscan-engine ./cmd/detector \
+ && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+      go build -trimpath -ldflags="-s -w -buildid=" -o /skillscan-v39 ./cmd/skillscan
+
+FROM busybox:1.36-musl
+ARG RUNTIME_PROFILE=product
+COPY --from=build /skillscan-engine /skillscan-engine
+COPY --from=build /skillscan-v39 /skillscan-v39
+ENV SKILLSCAN_ENGINE=/skillscan-engine \
+    SKILLSCAN_V39_MODE=enforce \
+    SKILLSCAN_PROFILE=$RUNTIME_PROFILE
+RUN mkdir -p /output /data/skills /tmp \
+ && chmod 1777 /tmp \
+ && chown -R 1000:0 /output /data
+USER 1000
+ENTRYPOINT ["/skillscan-v39"]
