@@ -99,6 +99,8 @@ The scanner emits one JSON object per Skill:
 
 Results are written to a temporary file and atomically committed as `results.jsonl` to reduce partial-output corruption.
 
+The scanner also writes `scan-metadata.jsonl` with per-Skill completeness, read errors, resource truncation, sampled files, skipped links, and opaque payloads. By default, any incomplete scan still writes both files and then exits with status `3`; the affected Skill cannot remain `benign`. Legacy ranking harnesses may explicitly set `SKILLSCAN_ALLOW_PARTIAL=1`, while the warning remains present in the result and metadata.
+
 ## Coverage
 
 | Category | Risk | Representative coverage |

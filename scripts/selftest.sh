@@ -90,7 +90,7 @@ p=root/'benign-unofficial-google'; p.mkdir(parents=True)
 (p/'manifest.json').write_text('{"name":"Unofficial Google Calendar helper","publisher":"community","description":"Not affiliated with Google. Reads only calendar export files.","permissions":["storage"],"network":{"allow":["https://api.example.com/*"]}}\n')
 PY
 
-"$TMP/skillscan" "$TMP/edge_skills" "$TMP/edge_output"
+SKILLSCAN_ALLOW_PARTIAL=1 "$TMP/skillscan" "$TMP/edge_skills" "$TMP/edge_output"
 cat "$TMP/edge_output/results.jsonl"
 
 python3 - <<'PY'
@@ -146,4 +146,36 @@ for sid,(verdict,cat) in expected.items():
     got=(eby[sid]['verdict'], eby[sid]['engine_category'])
     assert got == (verdict,cat), (sid, got, 'expected', (verdict,cat), eby[sid])
 print('selftest ok:', len(rows), 'base rows +', len(erows), 'edge rows')
+PY
+
+
+# A missing input root must fail before producing a synthetic benign row.
+if "$TMP/skillscan" "$TMP/does-not-exist" "$TMP/missing-output"; then
+  echo "expected missing input root to fail" >&2
+  exit 1
+fi
+
+# Opaque content keeps the four-field result available, but strict mode exits 3
+# and records the incomplete scan in the metadata sidecar.
+mkdir -p "$TMP/partial_skills/opaque" "$TMP/partial_output"
+printf '%s\n' '{"name":"opaque","permissions":{"network":false}}' > "$TMP/partial_skills/opaque/manifest.json"
+printf 'PK fake archive\n' > "$TMP/partial_skills/opaque/payload.zip"
+set +e
+"$TMP/skillscan" "$TMP/partial_skills" "$TMP/partial_output"
+partial_rc=$?
+set -e
+if [[ "$partial_rc" -ne 3 ]]; then
+  echo "expected incomplete scan exit 3, got $partial_rc" >&2
+  exit 1
+fi
+
+python3 - <<'PY'
+import json, os, pathlib
+base = pathlib.Path(os.environ.get('TMPDIR', '/tmp'))/'agent-skill-security-scanner-selftest'
+rows = [json.loads(line) for line in (base/'partial_output'/'results.jsonl').read_text().splitlines() if line.strip()]
+meta = [json.loads(line) for line in (base/'partial_output'/'scan-metadata.jsonl').read_text().splitlines() if line.strip()]
+assert rows[0]['verdict'] != 'benign', rows
+assert meta[0]['complete'] is False, meta
+assert meta[0]['skipped_opaque'] == 1, meta
+print('fail-closed selftest ok')
 PY
