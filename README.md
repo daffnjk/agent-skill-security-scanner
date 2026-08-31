@@ -29,7 +29,13 @@
 
 ## v38 本地评测
 
-冻结的 `competition/v38-final` 已在本地恶意 skills 语料上完成可复现的离线静态评测：13 个评估单元中 11 个完成扫描、2 个仅含元数据，共执行 **63,707** 次样本扫描；另对 PoisonedSkills 的 **1,070** 个正式恶意样本完成全量扫描。所有单元测试和内置回归样本在评测前均通过。
+冻结的 `competition/v38-final` 已在本地恶意 Skills 语料上完成可复现的离线静态测评：13 个评估单元中 11 个完成扫描、2 个仅含元数据，共执行 **63,707** 次样本扫描；另对 PoisonedSkills 的 **1,070** 个正式恶意样本完成全量扫描。所有单元测试和内置回归样本在测评前均通过。
+
+### 测评数据集
+
+- **已完成扫描（11 个评估单元）**：Agent Skill Malware、AgentTrap、ATR Skill Benchmark、Malicious Skill Bench（正文视图）、Malicious Skill Bench（完整包视图）、MalSkillBench、Overtly Malicious Skills、SkillsBench 1,650、SkillGuard v2、SkillLifeBench（注入场景视图）、SkillTrustBench。
+- **仅含元数据、未生成检测结论（2 个评估单元）**：Malicious Agent Skills Bench、SkillLeakBench。当前快照没有可供检测器静态扫描的 Skill 正文，因此没有用分类标签、问题描述或仓库 URL 冒充扫描结果。
+- **独立补充恶意正样本集**：PoisonedSkills，共 1,070 个符合 `V<number>/SKILL.md` 结构的正式样本；排除不属于正式数据集的 `.claude/` 与 `V786_poc/`。
 
 | 评估单元 | 严格精确率 | 严格召回率 | 严格 F2 | 筛查召回率 | 说明 |
 | --- | ---: | ---: | ---: | ---: | --- |
