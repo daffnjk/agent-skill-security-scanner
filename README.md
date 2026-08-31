@@ -249,6 +249,8 @@ make verify
 
 配套的可追溯评测数据目录见 [`agent-skill-security-datasets`](https://github.com/daffnjk/agent-skill-security-datasets)。
 
+版本化检测指标见 [`benchmarks/`](benchmarks/README.md)；首个快照为 [`v38`](benchmarks/v38/README.md)，后续版本沿用相同 CSV 键和指标口径进行逐数据集对比。
+
 ## 已知边界
 
 - 静态规则和行为链分析可能产生误报或漏报。
