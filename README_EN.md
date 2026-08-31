@@ -4,15 +4,17 @@
 
 ### Offline, explainable, multi-layer static analysis for the Agent Skill supply chain
 
-**Evolved from a prototype ranked in the 20s on a public-stage leaderboard of Track B in the inaugural 2026 Volcengine AI Security Challenge into the reproducible v38 / recall micro-loop 115 open-source engine.**
+**Final submission to Track B of the inaugural 2026 Volcengine AI Security Challenge: `7.27 / 10`, final rank `20+`. The exact v38 / recall micro-loop 115 competition build is now open source.**
 
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
+[![Track B Score](https://img.shields.io/badge/Track_B_score-7.27%2F10-8250df)](#final-competition-result)
+[![Final Rank](https://img.shields.io/badge/final_rank-20%2B-f0b429)](#final-competition-result)
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Offline](https://img.shields.io/badge/runtime-offline-1f883d)](Dockerfile)
-[![Deterministic](https://img.shields.io/badge/output-deterministic-8250df)](#output)
+[![Deterministic](https://img.shields.io/badge/output-deterministic-0969da)](#output)
 [![License](https://img.shields.io/badge/license-MIT-f0b429)](LICENSE)
 
-[Quick start](#quick-start) · [Why it stands out](#why-it-stands-out) · [Coverage](#coverage) · [Competition origin](#competition-origin-and-evolution) · [Architecture](#architecture) · [中文](README.md)
+[Final result](#final-competition-result) · [Quick start](#quick-start) · [Why it stands out](#why-it-stands-out) · [Coverage](#coverage) · [Architecture](#architecture) · [中文](README.md)
 
 </div>
 
@@ -20,6 +22,25 @@
 
 > [!IMPORTANT]
 > This is a heuristic static-analysis tool. Findings are review leads, not final proof that a package is safe or malicious. Never execute an untrusted Skill merely to validate an alert.
+
+## Final competition result
+
+> [!NOTE]
+> **The v38 / recall micro-loop 115 source code in this repository is the final build submitted at the competition deadline and evaluated for the result below. It is not a post-event rewrite or an unscored successor.**
+
+| Scoring dimension | Official weight | Final weighted points | Maximum points | Share of maximum* |
+| --- | ---: | ---: | ---: | ---: |
+| Detection quality | 55% | **4.34** | 5.50 | about 78.9% |
+| Explainability | 20% | **1.10** | 2.00 | 55.0% |
+| Runtime robustness | 15% | **0.83** | 1.50 | about 55.3% |
+| Performance | 10% | **1.00** | 1.00 | **100%** |
+| **Total** | **100%** | **7.27** | **10.00** | **72.7%** |
+
+**Final rank: 20+.** The published weighted components reconcile exactly: `4.34 + 1.10 + 0.83 + 1.00 = 7.27`.
+
+\* Percentages are simple ratios calculated from the reported weighted points and their maximum contribution. They are not additional official raw metrics.
+
+The score profile makes the engineering trade-offs visible: performance received full points and detection quality contributed most of the total, while explainability and runtime robustness remain the clearest areas for further measurable improvement. The repository presents the actual competition result rather than substituting synthetic benchmarks or post-event assumptions.
 
 ## Why it stands out
 
@@ -32,6 +53,7 @@
 | **Explainable root cause** | Emits one primary `AST01`–`AST10` category and human-readable evidence for every non-benign result |
 | **Bounded resources and failure containment** | Per-file, per-skill, and blob-count limits; per-skill parser recovery; atomic result-file commit |
 | **Competition-compatible I/O** | `/data/skills/{skill_id}/` to `/output/results.jsonl`, BusyBox runtime, and non-root `USER 1000` |
+| **Auditable final-build provenance** | The open-source code and final competition submission are both v38 / loop 115, with the score and component breakdown disclosed here |
 
 ### Verifiable engineering facts
 
@@ -47,11 +69,11 @@
 | Per-skill retained blobs | Up to 4,096 |
 | Historical v38 synthetic benchmark | 4,000 skills in about 3.8 seconds, about 21.5 MiB max RSS* |
 
-\* Historical, hardware- and corpus-specific, and not an official competition score. Re-benchmark on your own workload. See [PERFORMANCE.md](PERFORMANCE.md).
+\* Historical, hardware- and corpus-specific, and not the official competition performance component. Re-benchmark on your own workload. See [PERFORMANCE.md](PERFORMANCE.md).
 
-## Competition origin and evolution
+## Competition origin and version evolution
 
-The project began in **Track B (Blue Team Detection Challenge) of the inaugural 2026 Volcengine AI Security Challenge**. Public post-event materials report **617 blue-team entrants**, about **7,200 submitted engine packages**, and a top track score of **8.74**. Entrants submitted Dockerized Skill scanners evaluated on hidden benign, suspicious, and malicious samples across:
+The project originated in **Track B (Blue Team Detection Challenge) of the inaugural 2026 Volcengine AI Security Challenge**. Entrants submitted Dockerized Skill scanners evaluated on hidden benign, suspicious, and malicious samples across:
 
 - **55% detection quality**, centered on recall-weighted F₂;
 - **10% performance**, including runtime and token efficiency;
@@ -60,16 +82,13 @@ The project began in **Track B (Blue Team Detection Challenge) of the inaugural 
 
 The technical choice was deliberate: instead of depending on an online LLM, the engine goes deep on static behavior semantics, cross-file correlation, deterministic AST selection, and reproducible output under strict resource constraints.
 
-### From a public-leaderboard rank in the 20s to the v38 open-source baseline
+### Evolution before the final submission
 
-| Stage | Positioning | Public result / status | Main changes |
-| --- | --- | --- | --- |
-| Initial competition build | Working contest prototype | **Entered the 20s on a public-stage leaderboard during the competition** | Established F₂-oriented verdicting, tri-state output, AST classification, and standard JSONL |
-| v32–v35 | Robustness and specificity | Continued post-contest iteration | Dual-profile collection, guarded promotion, UTF-16 and edge formats, boolean permission semantics, atomic output |
-| v36–v37 | F₂ edge-recall hardening | Continued post-contest iteration | Credential exfiltration, WebSocket C2, local agent control, CI/supply-chain execution, cross-platform metadata loss |
-| **v38 / loop 115** | Current open-source baseline | **Not presented as an official re-score** | IDE/project auto-run hijacking, mutable build entrypoints, encoding evasion, brand impersonation, Rust/non-Python exfiltration, clearer evidence prefixes |
-
-The public-stage rank in the 20s is preserved as the project's honest starting point. It is not used to imply that the later open-source build received an official re-evaluation. No exact personal score is stated because the repository materials available for this documentation update did not include a verifiable score record.
+| Stage | Positioning | Main changes |
+| --- | --- | --- |
+| v32–v35 | Robustness and specificity hardening | Dual-profile collection, guarded promotion, UTF-16 and edge formats, boolean permission semantics, atomic output |
+| v36–v37 | F₂ edge-recall hardening | Credential exfiltration, WebSocket C2, local agent control, CI/supply-chain execution, cross-platform metadata loss |
+| **v38 / loop 115** | **Final competition submission and current open-source baseline** | IDE/project auto-run hijacking, mutable build entrypoints, encoding evasion, brand impersonation, Rust/non-Python exfiltration, clearer evidence prefixes; final **7.27 / 10, rank 20+** |
 
 See [docs/design.md](docs/design.md), [docs/competition.md](docs/competition.md), and [CHANGELOG.md](CHANGELOG.md).
 
