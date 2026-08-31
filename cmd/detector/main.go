@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +43,7 @@ type SkillReport struct {
 	EvidenceText   string
 	Findings       []Finding
 	CategoryScore  map[string]float64
+	Scan           ScanStatus
 }
 
 const (
@@ -63,6 +63,9 @@ func main() {
 	if len(os.Args) >= 3 && os.Args[2] != "" {
 		outputDir = os.Args[2]
 	}
+	if err := validateInputRoot(inputDir); err != nil {
+		fail("validate input dir", err)
+	}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		fail("create output dir", err)
 	}
@@ -74,13 +77,18 @@ func main() {
 	}
 	writer := bufio.NewWriter(out)
 
-	skills := discoverSkills(inputDir)
+	skills, err := discoverSkills(inputDir)
+	if err != nil {
+		fail("discover skills", err)
+	}
+	metadataRows := make([]ScanMetadata, 0, len(skills))
 	enc := json.NewEncoder(writer)
 	enc.SetEscapeHTML(false)
-	for _, s := range skills {
-		report := safeAnalyzeSkill(s.Path)
+	for _, skill := range skills {
+		report := safeAnalyzeSkill(skill.Path)
+		metadataRows = append(metadataRows, newScanMetadata(skill.ID, report.Scan))
 		res := Result{
-			SkillID:        s.ID,
+			SkillID:        skill.ID,
 			Verdict:        report.Verdict,
 			EngineCategory: report.EngineCategory,
 			EvidenceText:   report.EvidenceText,
@@ -98,16 +106,28 @@ func main() {
 	if err := commitResults(tmpPath, outPath); err != nil {
 		fail("commit results.jsonl", err)
 	}
+	if err := writeScanMetadata(outputDir, metadataRows); err != nil {
+		fail("write scan-metadata.jsonl", err)
+	}
+
+	if incomplete := countIncompleteScans(metadataRows); incomplete > 0 && !partialScansAllowed() {
+		_, _ = fmt.Fprintf(os.Stderr, "scan incomplete: %d skill(s); see %s\n", incomplete, filepath.Join(outputDir, "scan-metadata.jsonl"))
+		os.Exit(incompleteScanExitCode)
+	}
 }
 
 func safeAnalyzeSkill(root string) (report SkillReport) {
 	defer func() {
-		if r := recover(); r != nil {
+		if recovered := recover(); recovered != nil {
+			status := newScanStatus()
+			status.InternalError = fmt.Sprint(recovered)
+			status.markIncomplete("internal scanner error")
 			report = SkillReport{
 				Verdict:        "suspicious",
 				EngineCategory: "ast08",
-				EvidenceText:   fmt.Sprintf("ast08 scanner robustness fallback: recovered from an internal parser error while processing %s; emitted a conservative valid JSONL row instead of dropping the skill.", sanitizePath(filepath.Base(root))),
-				CategoryScore:  map[string]float64{"ast08": 2.0},
+				EvidenceText:   fmt.Sprintf("OWASP AST08 scanner failure: an internal scanner error occurred while processing %s; the target was not classified as benign.", sanitizePath(filepath.Base(root))),
+				CategoryScore:  map[string]float64{"ast08": 2.5},
+				Scan:           status,
 			}
 		}
 	}()
@@ -133,72 +153,65 @@ func confidenceFor(report SkillReport) float64 {
 
 type skillPath struct{ ID, Path string }
 
-func discoverSkills(input string) []skillPath {
+func discoverSkills(input string) ([]skillPath, error) {
 	entries, err := os.ReadDir(input)
 	if err != nil {
-		// Return one synthetic failed item rather than crashing; official harness should provide the directory.
-		return []skillPath{{ID: filepath.Base(input), Path: input}}
+		return nil, err
 	}
 	var out []skillPath
-	for _, e := range entries {
-		if !e.IsDir() {
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		name := e.Name()
+		name := entry.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
 		out = append(out, skillPath{ID: name, Path: filepath.Join(input, name)})
 	}
 	if len(out) == 0 {
-		out = append(out, skillPath{ID: filepath.Base(input), Path: input})
+		out = append(out, skillPath{ID: filepath.Base(filepath.Clean(input)), Path: input})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	return out, nil
 }
 
 func analyzeSkill(root string) SkillReport {
-	// v33 keeps the v32 detection policy but collects the v25 and v26 file views
-	// in a single filesystem pass. That removes the largest benign-heavy overhead
-	// without changing the scoring thresholds or the high-confidence promotion gate.
-	baseBlobs, explainBlobs := collectFilesDual(root)
+	baseBlobs, explainBlobs, status := collectFilesDualStatus(root)
 	base := analyzeSkillV25FromBlobs(baseBlobs)
+	result := base
+
 	if base.Verdict == "benign" {
-		// v32: do not fully replace the conservative verdict path, but allow the
-		// broader v26 extractor to promote only high-confidence, behavior-backed
-		// chains that the v25 path intentionally skipped (for example dist/build
-		// extension code, TOML/prototype-pollution loaders, or cloud-metadata pivots).
-		// This recovers recall while keeping weak governance/metadata/cross-platform
-		// hints from turning every benign integration into a malicious row.
 		explain := analyzeSkillV26ExplainFromBlobs(explainBlobs)
 		if shouldPromoteFromExplain(explain) {
-			return explain
+			result = explain
 		}
-		return base
+		return enforceScanCompleteness(result, status)
 	}
-	// v31 adds a small set of high-confidence campaign/config rules to the v25 verdict path.
-	// When one of those rules is the primary reason, keep its AST category/evidence rather
-	// than letting the older v26 explain-only selector rewrite it away.
-	if isV31PrimaryEvidence(base.EvidenceText) {
-		return base
+
+	// Keep high-confidence primary findings without coupling control flow to the
+	// rendered evidence text.
+	if hasPinnedPrimaryFinding(base) {
+		return enforceScanCompleteness(base, status)
 	}
+
 	explain := analyzeSkillV26ExplainFromBlobs(explainBlobs)
-	if explain.EngineCategory == "" || explain.EngineCategory == "benign" || explain.Verdict == "benign" {
-		return base
+	if explain.EngineCategory != "" && explain.EngineCategory != "benign" && explain.Verdict != "benign" {
+		base.EngineCategory = explain.EngineCategory
+		base.EvidenceText = explain.EvidenceText
+		if len(explain.CategoryScore) > 0 {
+			base.CategoryScore = explain.CategoryScore
+		}
+		if len(explain.Findings) > 0 {
+			base.Findings = explain.Findings
+		}
 	}
-	base.EngineCategory = explain.EngineCategory
-	base.EvidenceText = explain.EvidenceText
-	if explain.CategoryScore != nil && len(explain.CategoryScore) > 0 {
-		base.CategoryScore = explain.CategoryScore
-	}
-	if len(explain.Findings) > 0 {
-		base.Findings = explain.Findings
-	}
-	return base
+	return enforceScanCompleteness(base, status)
 }
 
 func analyzeSkillV25(root string) SkillReport {
-	return analyzeSkillV25FromBlobs(collectFiles(root))
+	base, _, status := collectFilesDualStatus(root)
+	return enforceScanCompleteness(analyzeSkillV25FromBlobs(base), status)
 }
 
 func analyzeSkillV25FromBlobs(blobs []FileBlob) SkillReport {
@@ -223,13 +236,7 @@ func analyzeSkillV25FromBlobs(blobs []FileBlob) SkillReport {
 
 	category, maxScore := topCategory(scores)
 	category, maxScore = calibrateCategory(category, maxScore, scores)
-	blended := maxScore
-	for cat, sc := range scores {
-		if cat == category {
-			continue
-		}
-		blended += minFloat(sc, 4.0) * 0.18
-	}
+	blended := blendedScore(category, scores)
 
 	// AST09 is treated as a weak governance modifier. Prefer a stronger nearby AST when possible.
 	if category == "ast09" {
@@ -258,137 +265,13 @@ func analyzeSkillV25FromBlobs(blobs []FileBlob) SkillReport {
 }
 
 func collectFiles(root string) []FileBlob {
-	var blobs []FileBlob
-	var total int64
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
-			return filepath.SkipAll
-		}
-		if err != nil || d == nil {
-			return nil
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if shouldSkipDir(name) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || info.Size() <= 0 || total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		if shouldSkipFile(rel) || !isInterestingFile(rel) {
-			return nil
-		}
-		data, err := readFileSampled(path, info.Size(), maxFileBytes)
-		if err != nil || len(data) == 0 {
-			return nil
-		}
-		lower, ok := decodeTextLower(data)
-		if !ok {
-			return nil
-		}
-		if total+int64(len(data)) > maxTotalBytes {
-			return nil
-		}
-		total += int64(len(data))
-		blobs = append(blobs, FileBlob{
-			Rel:    rel,
-			Lower:  lower,
-			IsDoc:  isDocPath(rel),
-			IsMeta: isManifestPath(rel),
-			IsCode: isCodePath(rel),
-			Size:   int64(len(data)),
-		})
-		return nil
-	})
-	sort.Slice(blobs, func(i, j int) bool { return blobs[i].Rel < blobs[j].Rel })
-	return blobs
+	base, _, _ := collectFilesDualStatus(root)
+	return base
 }
 
 func collectFilesDual(root string) ([]FileBlob, []FileBlob) {
-	var baseBlobs []FileBlob
-	var explainBlobs []FileBlob
-	var baseTotal int64
-	var explainTotal int64
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		baseFull := baseTotal >= maxTotalBytes || len(baseBlobs) >= maxBlobsPerSkill
-		explainFull := explainTotal >= maxTotalBytes || len(explainBlobs) >= maxBlobsPerSkill
-		if baseFull && explainFull {
-			return filepath.SkipAll
-		}
-		if err != nil || d == nil {
-			return nil
-		}
-		name := d.Name()
-		if d.IsDir() {
-			// Skip only directories ignored by both profiles. Directories such as dist/
-			// and build/ remain available to the broader v26 view while still being
-			// excluded from the conservative v25 view below.
-			if shouldSkipDir(name) && shouldSkipDirV26(name) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || info.Size() <= 0 {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		if shouldSkipFile(rel) {
-			return nil
-		}
-		baseCandidate := !pathHasSkippedDir(rel, shouldSkipDir) && isInterestingFile(rel) && baseTotal < maxTotalBytes && len(baseBlobs) < maxBlobsPerSkill
-		explainCandidate := !pathHasSkippedDir(rel, shouldSkipDirV26) && isInterestingFileV26(rel) && explainTotal < maxTotalBytes && len(explainBlobs) < maxBlobsPerSkill
-		if !baseCandidate && !explainCandidate {
-			return nil
-		}
-		data, err := readFileSampled(path, info.Size(), maxFileBytes)
-		if err != nil || len(data) == 0 {
-			return nil
-		}
-		lower, ok := decodeTextLower(data)
-		if !ok {
-			return nil
-		}
-		dataLen := int64(len(data))
-		if baseCandidate && baseTotal+dataLen <= maxTotalBytes {
-			baseBlobs = append(baseBlobs, FileBlob{
-				Rel:    rel,
-				Lower:  lower,
-				IsDoc:  isDocPath(rel),
-				IsMeta: isManifestPath(rel),
-				IsCode: isCodePath(rel),
-				Size:   dataLen,
-			})
-			baseTotal += dataLen
-		}
-		if explainCandidate && explainTotal+dataLen <= maxTotalBytes {
-			explainBlobs = append(explainBlobs, FileBlob{
-				Rel:    rel,
-				Lower:  lower,
-				IsDoc:  isDocPath(rel),
-				IsMeta: isManifestPath(rel),
-				IsCode: isCodePathV26(rel),
-				Size:   dataLen,
-			})
-			explainTotal += dataLen
-		}
-		return nil
-	})
-	sort.Slice(baseBlobs, func(i, j int) bool { return baseBlobs[i].Rel < baseBlobs[j].Rel })
-	sort.Slice(explainBlobs, func(i, j int) bool { return explainBlobs[i].Rel < explainBlobs[j].Rel })
-	return baseBlobs, explainBlobs
+	base, explain, _ := collectFilesDualStatus(root)
+	return base, explain
 }
 
 func analyzeFile(b FileBlob) []Finding {
@@ -1151,38 +1034,49 @@ var loop16To115Rules = []loopChainRule{
 	{Loop: 115, Category: "ast01", Weight: 5.17, Strong: true, PathAny: []string{".md", ".json", ".yaml", ".yml", ".py", ".js", "manifest"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"migrate", "import from", "reuse"}, []string{"credentials", "tokens", "cookies", "wallet"}, []string{"send", "upload", "webhook"}}, Reason: "cross-platform reuse chain: cross platform credential migration"},
 }
 
-func analyzeLoop16To115File(b FileBlob) []Finding {
-	c := b.Lower
-	if c == "" {
+func analyzeLoop16To115File(blob FileBlob) []Finding {
+	content := blob.Lower
+	if content == "" {
 		return nil
 	}
-	path := strings.ToLower(b.Rel)
-	active := b.IsCode || b.IsMeta || isPackagePath(path) || isKnownTextConfigPath(path)
-	out := make([]Finding, 0, 4)
-	for _, r := range loop16To115Rules {
-		if r.ActiveOnly && !active {
+	path := strings.ToLower(blob.Rel)
+	active := isRuleActiveMaterial(blob)
+	out := make([]Finding, 0, 8)
+	for _, rule := range loop16To115Rules {
+		if rule.ActiveOnly && !active {
 			continue
 		}
-		if len(r.PathAny) > 0 && !hasAny(path, r.PathAny) {
+		if len(rule.PathAny) > 0 && !hasAny(path, rule.PathAny) {
 			continue
 		}
-		if r.SuppressInstructionalDocs && b.IsDoc && benignInstructionalContext(c) {
+		if rule.SuppressInstructionalDocs && blob.IsDoc && benignInstructionalContext(content) {
 			continue
 		}
-		ok := true
-		for _, group := range r.Groups {
-			if !hasAny(c, group) {
-				ok = false
+		matched := true
+		for _, group := range rule.Groups {
+			if !hasAny(content, group) {
+				matched = false
 				break
 			}
 		}
-		if !ok {
-			continue
+		if matched {
+			out = append(out, Finding{rule.Category, rule.Weight, blob.Rel, fmt.Sprintf("loop%d: %s", rule.Loop, rule.Reason), rule.Strong})
 		}
-		out = append(out, Finding{r.Category, r.Weight, b.Rel, fmt.Sprintf("loop%d: %s", r.Loop, r.Reason), r.Strong})
-		if len(out) >= 6 {
-			break
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Strong != out[j].Strong {
+			return out[i].Strong
 		}
+		if out[i].Weight != out[j].Weight {
+			return out[i].Weight > out[j].Weight
+		}
+		if out[i].Category != out[j].Category {
+			return out[i].Category < out[j].Category
+		}
+		return out[i].Reason < out[j].Reason
+	})
+	if len(out) > 6 {
+		out = out[:6]
 	}
 	return out
 }
@@ -1194,7 +1088,7 @@ func analyzeLoop16To115CrossFile(blobs []FileBlob) []Finding {
 		if b.Lower == "" || (b.IsDoc && benignInstructionalContext(b.Lower)) {
 			continue
 		}
-		if b.IsCode || b.IsMeta || isPackagePath(b.Rel) || isKnownTextConfigPath(b.Rel) {
+		if isRuleActiveMaterial(b) {
 			activeCount++
 			all.WriteString("\n")
 			all.WriteString(strings.ToLower(b.Rel))
@@ -1267,7 +1161,7 @@ func markdownCredentialWebhook(c string, b FileBlob) bool {
 }
 
 func benignInstructionalContext(c string) bool {
-	return hasAny(c, []string{"for educational purposes", "security training", "malware analysis", "example only", "demo only", "test fixture", "unit test", "do not run", "do not execute", "benign example", "sample payload"})
+	return isBenignInstructionalContext(c)
 }
 
 func isV31PrimaryEvidence(ev string) bool {
@@ -2107,7 +2001,12 @@ func topScoreParts(scores map[string]float64, primary string, n int) []string {
 		}
 		arr = append(arr, kv{k, v})
 	}
-	sort.Slice(arr, func(i, j int) bool { return arr[i].V > arr[j].V })
+	sort.Slice(arr, func(i, j int) bool {
+		if arr[i].V != arr[j].V {
+			return arr[i].V > arr[j].V
+		}
+		return arr[i].K < arr[j].K
+	})
 	if len(arr) > n {
 		arr = arr[:n]
 	}
@@ -2222,6 +2121,12 @@ func manifestBroadCapability(c string) bool {
 }
 
 func manifestCapabilityEnabled(c, cap string) bool {
+	trimmed := strings.TrimSpace(c)
+	if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(trimmed)) {
+		_, enabled := structuredJSONCapability(trimmed, cap)
+		return enabled
+	}
+
 	disabled := []string{"\"" + cap + "\":false", "\"" + cap + "\": false", cap + ": false", cap + "=false", "'" + cap + "': false", "'" + cap + "':false"}
 	if hasAny(c, disabled) {
 		return false
@@ -2282,7 +2187,7 @@ func isInterestingFile(rel string) bool {
 	if isManifestPath(n) || isPackagePath(n) || isKnownTextConfigPath(n) {
 		return true
 	}
-	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg"}
+	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg", ".tf"}
 	for _, e := range exts {
 		if strings.HasSuffix(n, e) {
 			return true
@@ -2347,26 +2252,29 @@ func pathHasSkippedDir(rel string, skip func(string) bool) bool {
 }
 
 func readFileSampled(path string, size, limit int64) ([]byte, error) {
-	f, err := os.Open(path)
+	if limit <= 0 {
+		return nil, fmt.Errorf("invalid sample limit %d", limit)
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer file.Close()
 	if size <= 0 || size <= limit {
-		return io.ReadAll(io.LimitReader(f, limit))
+		return io.ReadAll(io.LimitReader(file, limit))
 	}
 	headLimit := limit / 2
 	tailLimit := limit - headLimit
-	head, err := io.ReadAll(io.LimitReader(f, headLimit))
+	head, err := io.ReadAll(io.LimitReader(file, headLimit))
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.Seek(size-tailLimit, io.SeekStart); err != nil {
-		return head, nil
+	if _, err := file.Seek(size-tailLimit, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek sampled tail: %w", err)
 	}
-	tail, err := io.ReadAll(io.LimitReader(f, tailLimit))
+	tail, err := io.ReadAll(io.LimitReader(file, tailLimit))
 	if err != nil {
-		return head, nil
+		return nil, fmt.Errorf("read sampled tail: %w", err)
 	}
 	out := make([]byte, 0, len(head)+len(tail)+32)
 	out = append(out, head...)
@@ -2530,7 +2438,8 @@ func fail(prefix string, err error) {
 var _ io.Reader
 
 func analyzeSkillV26Explain(root string) SkillReport {
-	return analyzeSkillV26ExplainFromBlobs(collectFilesV26(root))
+	_, explain, status := collectFilesDualStatus(root)
+	return enforceScanCompleteness(analyzeSkillV26ExplainFromBlobs(explain), status)
 }
 
 func analyzeSkillV26ExplainFromBlobs(blobs []FileBlob) SkillReport {
@@ -2553,13 +2462,7 @@ func analyzeSkillV26ExplainFromBlobs(blobs []FileBlob) SkillReport {
 
 	category, maxScore := topCategory(scores)
 	category, maxScore = calibrateCategoryV26(category, maxScore, scores)
-	blended := maxScore
-	for cat, sc := range scores {
-		if cat == category {
-			continue
-		}
-		blended += minFloat(sc, 4.0) * 0.18
-	}
+	blended := blendedScore(category, scores)
 	if category == "ast09" {
 		altCat, altScore := topCategoryExcept(scores, "ast09")
 		if altCat != "" && altScore >= 1.8 {
@@ -2583,58 +2486,8 @@ func analyzeSkillV26ExplainFromBlobs(blobs []FileBlob) SkillReport {
 // ---- v26 explainability-only feature extractor. It is intentionally not used for verdicts. ----
 
 func collectFilesV26(root string) []FileBlob {
-	var blobs []FileBlob
-	var total int64
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
-			return filepath.SkipAll
-		}
-		if err != nil || d == nil {
-			return nil
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if shouldSkipDirV26(name) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || info.Size() <= 0 || total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		if shouldSkipFile(rel) || !isInterestingFileV26(rel) {
-			return nil
-		}
-		data, err := readFileSampled(path, info.Size(), maxFileBytes)
-		if err != nil || len(data) == 0 {
-			return nil
-		}
-		lower, ok := decodeTextLower(data)
-		if !ok {
-			return nil
-		}
-		if total+int64(len(data)) > maxTotalBytes {
-			return nil
-		}
-		total += int64(len(data))
-		blobs = append(blobs, FileBlob{
-			Rel:    rel,
-			Lower:  lower,
-			IsDoc:  isDocPath(rel),
-			IsMeta: isManifestPath(rel),
-			IsCode: isCodePathV26(rel),
-			Size:   int64(len(data)),
-		})
-		return nil
-	})
-	sort.Slice(blobs, func(i, j int) bool { return blobs[i].Rel < blobs[j].Rel })
-	return blobs
+	_, explain, _ := collectFilesDualStatus(root)
+	return explain
 }
 
 func analyzeFileV26(b FileBlob) []Finding {
@@ -3127,7 +2980,7 @@ func isInterestingFileV26(rel string) bool {
 	if isManifestPath(n) || isPackagePathV26(n) || isKnownTextConfigPath(n) {
 		return true
 	}
-	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".swift", ".scala", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg"}
+	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".swift", ".scala", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg", ".tf"}
 	for _, e := range exts {
 		if strings.HasSuffix(n, e) {
 			return true

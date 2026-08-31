@@ -4,6 +4,13 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fail closed on missing, unreadable, truncated, symlinked, or opaque scan input; incomplete scans can no longer remain benign.
+- Add `scan-metadata.jsonl` with per-Skill completeness and resource/error telemetry while preserving the four-field competition result schema.
+- Prioritize manifests, lifecycle files, CI/project configuration, and source code before documentation consumes the bounded scan budget.
+- Normalize mixed-case rule needles, make plain `SKILL.md` content reachable by document rules, and add Terraform file collection.
+- Use deterministic blended-score and secondary-evidence ordering, strengthen JSON capability parsing, and add hardening/fuzz regression seeds.
+- Pin CI actions to commit SHAs, add vet/race/coverage/container checks, and make Docker/Makefile builds architecture-aware.
+
 - Corrected the competition provenance: the open-source v38 / recall micro-loop 115 engine is the final Track B submission, not a post-contest successor.
 - Added the final score and component breakdown: 7.27/10 total, with 4.34 detection quality, 1.10 explainability, 0.83 runtime robustness, and 1.00 performance.
 - Added the final rank statement of 20+ to both Chinese and English project pages.

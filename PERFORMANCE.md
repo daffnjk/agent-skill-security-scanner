@@ -16,3 +16,8 @@ Build a stripped Linux binary with:
 ```bash
 make release
 ```
+
+
+## Completeness semantics
+
+Security-sensitive metadata, package lifecycle files, CI/project configuration, and source code are prioritized before ordinary documentation consumes the bounded per-Skill budget. Reaching a byte/file budget, failing to read a supported file, or skipping a symlink or opaque executable/archive is recorded in `scan-metadata.jsonl`; strict mode exits with status 3 rather than treating the scan as a successful benign result. Oversized text files that are successfully head/tail sampled are counted in metadata but do not alone make the scan incomplete.
