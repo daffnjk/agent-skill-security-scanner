@@ -29,24 +29,26 @@
 
 ## v38 本地评测
 
-冻结的 `competition/v38-final` 已在本地恶意 Skills 语料上完成可复现的离线静态测评：13 个评估单元中 11 个完成扫描、2 个仅含元数据，共执行 **63,707** 次样本扫描；另对 PoisonedSkills 的 **1,070** 个正式恶意样本完成全量扫描。所有单元测试和内置回归样本在测评前均通过。
+冻结的 `competition/v38-final` 共覆盖本地恶意 Skills 语料的 13 个评估单元：11 个包含可扫描正文并全部完成，累计 **63,707** 次静态扫描；2 个仅含元数据，未生成检测结论。此外，检测器还对 PoisonedSkills 的 **1,070** 个正式恶意样本完成了独立全量扫描。所有样本均作为不可信静态输入处理，没有执行 Skill、辅助脚本、PoC 或其中的 URL。
 
-### 测评数据集
+| 数据集 / 评估视图 | 状态 | 扫描数 | 恶意 / 可疑 / 良性 | 严格精确率 | 严格召回率 | 严格 F2 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Malicious Skill Bench（正文） | 已完成 | 9,740 | 4,406 / 336 / 4,998 | 83.45% | 48.99% | 53.40% |
+| Malicious Skill Bench（完整包） | 已完成 | 7,505 | 6,176 / 183 / 1,146 | 不适用\* | 82.29% | 85.31%\* |
+| SkillTrustBench | 已完成 | 5,520 | 4,666 / 121 / 733 | 73.52% | 96.40% | 90.75% |
+| SkillsBench 1,650 | 已完成 | 1,650 | 703 / 58 / 889 | 20.06% | 94.00% | 54.11% |
+| Agent Skill Malware | 已完成 | 347 | 170 / 4 / 173 | 71.18% | 97.58% | 90.84% |
+| ATR Skill Benchmark | 已完成 | 498 | 226 / 14 / 258 | 11.95% | 84.38% | 38.14% |
+| SkillGuard v2 | 已完成 | 30,164 | 7,280 / 724 / 22,160 | 32.82% | 20.79% | 22.44% |
+| MalSkillBench | 已完成 | 7,944 | 5,471 / 188 / 2,285 | 59.75% | 82.89% | 76.93% |
+| AgentTrap | 已完成 | 141 | 103 / 0 / 38 | 55.34% | 62.64% | 61.03% |
+| Overtly Malicious Skills | 已完成 | 4 | 1 / 0 / 3 | 不适用\* | 25.00% | 29.41%\* |
+| SkillLifeBench（注入场景） | 已完成 | 194 | 89 / 8 / 97 | 不适用\* | 45.88% | 51.45%\* |
+| Malicious Agent Skills Bench | 仅元数据（98,380 条记录） | 0 | — | — | — | — |
+| SkillLeakBench | 仅元数据（520 条记录） | 0 | — | — | — | — |
+| PoisonedSkills | 独立补充正样本集 | 1,070 | 890 / 0 / 180 | 不适用\* | 83.18% | 86.07%\* |
 
-- **已完成扫描（11 个评估单元）**：Agent Skill Malware、AgentTrap、ATR Skill Benchmark、Malicious Skill Bench（正文视图）、Malicious Skill Bench（完整包视图）、MalSkillBench、Overtly Malicious Skills、SkillsBench 1,650、SkillGuard v2、SkillLifeBench（注入场景视图）、SkillTrustBench。
-- **仅含元数据、未生成检测结论（2 个评估单元）**：Malicious Agent Skills Bench、SkillLeakBench。当前快照没有可供检测器静态扫描的 Skill 正文，因此没有用分类标签、问题描述或仓库 URL 冒充扫描结果。
-- **独立补充恶意正样本集**：PoisonedSkills，共 1,070 个符合 `V<number>/SKILL.md` 结构的正式样本；排除不属于正式数据集的 `.claude/` 与 `V786_poc/`。
-
-| 评估单元 | 严格精确率 | 严格召回率 | 严格 F2 | 筛查召回率 | 说明 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Agent Skill Malware | 71.18% | 97.58% | 90.84% | 97.58% | 含良性负样本 |
-| SkillTrustBench | 73.52% | 96.40% | 90.75% | 98.36% | 二分类指标排除上游 `suspicious` 标签 |
-| Malicious Skill Bench（完整包） | 不适用 | 82.29% | 85.31% | 84.73% | 仅恶意正样本 |
-| Malicious Skill Bench（正文） | 83.45% | 48.99% | 53.40% | 52.64% | 含良性负样本 |
-| SkillGuard v2 | 32.82% | 20.79% | 22.44% | 21.23% | 含良性负样本 |
-| PoisonedSkills | 不适用 | 83.18% | 86.07% | 83.18% | 1,070 个恶意正样本；检出 890，漏检 180 |
-
-“严格”只将 `malicious` 视为阳性；“筛查”同时将 `malicious` 和 `suspicious` 视为阳性。仅正样本数据集不能评价误报率或有意义的精确率；由于不同数据集存在重叠，本项目不报告跨数据集全局总分。完整 13 单元指标、版本和安全口径见 [`benchmarks/v38`](benchmarks/v38/README.md)。
+\* 该评估单元只有恶意正样本，不能评价误报率或有意义的精确率；F2 主要反映召回表现。“严格”口径只将 `malicious` 视为阳性。不同数据集存在来源重叠，因此不计算跨数据集的总体分数。完整指标、版本与材料化口径见 [`benchmarks/v38`](benchmarks/v38/README.md)。
 
 ## 项目定位
 
