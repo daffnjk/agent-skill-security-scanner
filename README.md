@@ -10,9 +10,8 @@
 [![Score](https://img.shields.io/badge/final%20score-7.27%20%2F%2010-1f883d)](https://github.com/daffnjk/agent-skill-security-scanner/blob/main/docs/competition.md)
 [![Exact source](https://img.shields.io/badge/exact%20source-4d78e38-0969da)](https://github.com/daffnjk/agent-skill-security-scanner/commit/4d78e38f50a1195139827150de70406008af5b5c)
 [![Current development](https://img.shields.io/badge/current%20development-main-f0b429)](https://github.com/daffnjk/agent-skill-security-scanner/tree/main)
-[![Dataset baseline](https://img.shields.io/badge/dataset%20baseline-v38-0a7ea4)](https://github.com/daffnjk/agent-skill-security-scanner/tree/main/benchmarks/v38)
 
-[中文说明](#中文说明) · [数据集基线](#数据集基线) · [English](#english)
+[中文说明](#中文说明) · [English](#english)
 
 </div>
 
@@ -62,20 +61,6 @@ v38 联合分析 Agent Skill、MCP 工具包、IDE 规则、插件包中的 mani
 
 > [!WARNING]
 > 这是比赛期间形成的启发式静态检测器。结果是安全审查线索，不是包安全或恶意性的证明。请勿通过直接执行不可信 Skill 来验证扫描结果。
-
-### 数据集基线
-
-为支持赛后版本按固定口径回归，使用精确源代码提交 `4d78e38` 另行建立了 [`v38 数据集基线`](https://github.com/daffnjk/agent-skill-security-scanner/tree/main/benchmarks/v38)。该基线记录检测器与数据源哈希，只提交汇总指标，不提交恶意样本正文或逐样本证据。
-
-| 评测套件 | 评估单元 | 实际扫描 | 结果摘要 |
-| --- | ---: | ---: | --- |
-| 本地 malicious-skills corpus | 13 | 63,707 | 11 个单元完成，2 个仅含元数据 |
-| PoisonedSkills | 1 | 1,070 | 890 个判为 `malicious`，180 个漏检；严格召回率 83.18%，F2 86.07% |
-
-不同数据集存在重叠，部分单元只有恶意正样本，因此不计算跨数据集总分，也不把正样本单元的数学精确率解释为误报能力。完整指标、来源固定版本与口径见 [`metrics.csv`](https://github.com/daffnjk/agent-skill-security-scanner/blob/main/benchmarks/v38/metrics.csv) 和 [`manifest.json`](https://github.com/daffnjk/agent-skill-security-scanner/blob/main/benchmarks/v38/manifest.json)。
-
-> [!NOTE]
-> 这些是赛后使用公开数据集得到的可复现基线，不是赛事官方重新评分，也不代表当前 `main` 的检测能力。
 
 ### 比赛成绩
 
@@ -199,12 +184,6 @@ cat ./out/results.jsonl
 ```
 
 The competition version emits only the four-field `results.jsonl` contract. The `scan-metadata.jsonl` sidecar, explicit completeness status, and strict exit status `3` available on `main` are post-competition hardening features and are not part of this snapshot.
-
-### Dataset benchmark baseline
-
-A separate [`v38 dataset baseline`](https://github.com/daffnjk/agent-skill-security-scanner/tree/main/benchmarks/v38) was produced after the competition from the exact `4d78e38` source. It records 63,707 static scans across 13 local-corpus evaluation units plus all 1,070 canonical PoisonedSkills samples. On PoisonedSkills, v38 detected 890 samples and missed 180, for 83.18% strict recall and 86.07% F2.
-
-The snapshot pins detector and upstream dataset hashes and commits only aggregate metrics. It is a reproducible post-competition benchmark, not an official competition re-score and not a measurement of current `main`. Dataset overlap and positive-only units prevent a meaningful global score. See [`metrics.csv`](https://github.com/daffnjk/agent-skill-security-scanner/blob/main/benchmarks/v38/metrics.csv) and [`manifest.json`](https://github.com/daffnjk/agent-skill-security-scanner/blob/main/benchmarks/v38/manifest.json).
 
 ### Competition result
 
