@@ -1,32 +1,52 @@
-# v38 benchmark baseline
+# v38 本地评测基准
 
-This snapshot records the v38 detector's local static-analysis results so future releases can be compared against a stable baseline.
+本目录记录冻结版本 `competition/v38-final` 在公开、本地数据集上的离线静态测评结果，作为可追溯的版本化基准。该结果独立于赛事隐藏集成绩，不代表赛事重新测评。
 
-## Scope
+## 测评范围
 
-- Detector source: repository commit `4d78e38f50a1195139827150de70406008af5b5c`.
-- Detector executable SHA-256: `e7374f41448d0f175308f81023642287f6f2274b0960e71700d89a91aecbbff5`.
-- Local malicious-skills corpus: 13 evaluation units; 11 completed and 2 metadata-only; 63,707 scans.
-- PoisonedSkills: 1,070/1,070 canonical `V<number>/SKILL.md` samples scanned at commit `5068b39ff85c5e9a3afdb856a53b85867043c923`.
-- All detector unit tests and bundled regression samples passed before evaluation.
+- 检测器源码：仓库提交 `4d78e38f50a1195139827150de70406008af5b5c`。
+- 检测器二进制 SHA-256：`e7374f41448d0f175308f81023642287f6f2274b0960e71700d89a91aecbbff5`。
+- 本地恶意 Skills 语料：13 个评估单元，其中 11 个完成扫描、2 个仅含元数据，累计 63,707 次扫描。
+- PoisonedSkills：固定提交 `5068b39ff85c5e9a3afdb856a53b85867043c923`，1,070/1,070 个正式 `V<number>/SKILL.md` 样本完成扫描。
+- 测评前，检测器单元测试和内置回归样本均已通过。
 
-Only aggregate metrics are committed. The downloaded corpora, materialized inputs, raw predictions, and malicious sample text are intentionally excluded.
+仓库只提交聚合指标、版本和来源信息；下载的数据集、材料化输入、逐样本原始预测和恶意样本文本不进入本仓库。
 
-## Headline results
+## 全部数据集指标
 
-| Evaluation unit | Strict precision | Strict recall | Strict F2 | Screening recall | Notes |
-|---|---:|---:|---:|---:|---|
-| Agent Skill Malware | 71.18% | 97.58% | 90.84% | 97.58% | Includes benign negatives |
-| SkillTrustBench | 73.52% | 96.40% | 90.75% | 98.36% | Upstream suspicious labels excluded from binary metrics |
-| Malicious Skill Bench, package view | N/A | 82.29% | 85.31% | 84.73% | Positive-only unit |
-| Malicious Skill Bench, full-text view | 83.45% | 48.99% | 53.40% | 52.64% | Includes benign negatives |
-| SkillGuard v2 | 32.82% | 20.79% | 22.44% | 21.23% | Includes benign negatives |
-| PoisonedSkills | N/A | 83.18% | 86.07% | 83.18% | 1,070 malicious positives; 890 detected, 180 missed |
+| 数据集 / 评估视图 | 状态 | 扫描数 | 恶意 / 可疑 / 良性 | 严格精确率 | 严格召回率 | 严格 F2 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Malicious Skill Bench（正文） | 已完成 | 9,740 | 4,406 / 336 / 4,998 | 83.45% | 48.99% | 53.40% |
+| Malicious Skill Bench（完整包） | 已完成 | 7,505 | 6,176 / 183 / 1,146 | 不适用\* | 82.29% | 85.31%\* |
+| SkillTrustBench | 已完成 | 5,520 | 4,666 / 121 / 733 | 73.52% | 96.40% | 90.75% |
+| SkillsBench 1,650 | 已完成 | 1,650 | 703 / 58 / 889 | 20.06% | 94.00% | 54.11% |
+| Agent Skill Malware | 已完成 | 347 | 170 / 4 / 173 | 71.18% | 97.58% | 90.84% |
+| ATR Skill Benchmark | 已完成 | 498 | 226 / 14 / 258 | 11.95% | 84.38% | 38.14% |
+| SkillGuard v2 | 已完成 | 30,164 | 7,280 / 724 / 22,160 | 32.82% | 20.79% | 22.44% |
+| MalSkillBench | 已完成 | 7,944 | 5,471 / 188 / 2,285 | 59.75% | 82.89% | 76.93% |
+| AgentTrap | 已完成 | 141 | 103 / 0 / 38 | 55.34% | 62.64% | 61.03% |
+| Overtly Malicious Skills | 已完成 | 4 | 1 / 0 / 3 | 不适用\* | 25.00% | 29.41%\* |
+| SkillLifeBench（注入场景） | 已完成 | 194 | 89 / 8 / 97 | 不适用\* | 45.88% | 51.45%\* |
+| Malicious Agent Skills Bench | 仅元数据（98,380 条记录） | 0 | — | — | — | — |
+| SkillLeakBench | 仅元数据（520 条记录） | 0 | — | — | — | — |
+| PoisonedSkills | 独立补充正样本集 | 1,070 | 890 / 0 / 180 | 不适用\* | 83.18% | 86.07%\* |
 
-See `metrics.csv` for every evaluation unit. No global score is reported because datasets overlap and some contain only positive samples.
+\* 该评估单元只有恶意正样本，不能评价误报率或有意义的精确率；F2 主要反映召回表现。
 
-## Safety and materialization
+完整机器可读指标见 [`metrics.csv`](metrics.csv)。不同基准之间存在来源复用或样本重叠，因此不计算跨数据集的总体准确率、精确率、召回率或 F2。
 
-All skill content was treated as untrusted static input. No skill, helper script, PoC, URL, test harness, or corpus dependency was executed.
+## 指标口径
 
-Tabular datasets were deterministically materialized as skill directories. Complete-package views included regular package files without following symbolic links. PoisonedSkills excluded `.claude/` and `V786_poc/`, which are not part of the 1,070 canonical samples.
+- **严格口径**：只有 `verdict=malicious` 视为阳性。
+- **筛查口径**：`verdict=malicious` 或 `verdict=suspicious` 均视为阳性；完整筛查指标记录在 `metrics.csv`。
+- 空指标表示当前数据快照没有可供检测器扫描的 Skill 正文，未生成检测结论。
+- `precision_applicable=false` 表示该单元没有良性负样本，数学精确率不能反映误报行为。
+- 运行时间仅用于记录本次运行，不应跨硬件或不同材料化方式直接比较。
+
+## 安全与材料化方式
+
+所有 Skill 内容都作为不可信静态数据处理，没有执行 Skill、辅助脚本、PoC、URL、测试 harness 或数据集依赖。
+
+表格型数据集被确定性材料化为 Skill 目录；完整包视图保留普通文件但不跟随符号链接。PoisonedSkills 只纳入 1,070 个符合 `V<number>/SKILL.md` 结构的正式样本，排除不属于正式数据集的 `.claude/` 和 `V786_poc/`。
+
+版本、数据来源和运行器信息分别记录在 [`manifest.json`](manifest.json) 与 [`source_revisions.tsv`](source_revisions.tsv)。
