@@ -1,0 +1,16 @@
+# Build outputs
+/skillscan
+/skillscan-*
+/detector
+/out/
+/output/
+
+# Local and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test and coverage artifacts
+coverage.out
+*.test
