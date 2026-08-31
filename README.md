@@ -4,7 +4,7 @@
 
 ### 面向 Agent Skill 供应链的离线、可解释、多层静态检测引擎
 
-**2026 首届火山引擎 AI 安全攻防挑战赛 · 赛道 B 最终提交版本：总分 `7.27 / 10`，最终排名 `20+`。现完整开源 v38 / recall micro-loop 115。**
+**2026 首届火山引擎 AI 安全攻防挑战赛 · 赛道 B 最终提交版本：总分 `7.27 / 10`，最终排名 `20+`。现完整开源 。**
 
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
 [![Track B Score](https://img.shields.io/badge/Track_B_score-7.27%2F10-8250df)](#最终竞赛成绩)
