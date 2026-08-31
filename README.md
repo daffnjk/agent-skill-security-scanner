@@ -13,15 +13,13 @@
 [![Competition baseline](https://img.shields.io/badge/competition-v38%20frozen-8250df)](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
 [![License](https://img.shields.io/badge/license-MIT-f0b429)](LICENSE)
 
-[项目定位](#项目定位) · [版本路线](#版本路线) · [基准指标](#基准指标) · [快速开始](#快速开始) · [输出与退出语义](#输出与退出语义) · [检测范围](#检测范围) · [竞赛成绩](#竞赛成绩) · [English](README_EN.md)
+[项目定位](#项目定位) · [快速开始](#快速开始) · [输出与退出语义](#输出与退出语义) · [检测范围](#检测范围) · [版本路线](#版本路线) · [竞赛成绩](#竞赛成绩) · [English](README_EN.md)
 
 </div>
 
 `skillscan` 将待测 Skill 作为**不可信数据**处理：不安装、不导入、不执行其中的脚本，也不访问包内声明的 URL。扫描器联合分析 manifest、代码、文档、CI 工作流、Dockerfile、Agent/MCP 配置及项目自动运行配置，识别分散在多个文件中的恶意行为链、权限与实际行为矛盾，以及供应链和跨平台迁移风险。
 
 当前 `main` 是基于比赛 v38 版本持续演进的开发主线。它保留兼容的四字段 `results.jsonl`，同时增加扫描完整性元数据和 fail-closed 语义：读取失败、资源截断、符号链接或不透明载荷导致扫描不完整时，对应 Skill 不会继续保持 `benign`，默认进程会在写出结果后以退出码 `3` 结束。
-
-仓库采用“持续演进主线 + 冻结比赛基线”的双轨结构：`main` 用于当前开发，`competition/v38-final` 用于精确复现比赛代码。版本化数据集指标统一保存在 [`benchmarks/`](benchmarks/README.md)，便于后续版本按相同数据源、样本口径和 `(suite, dataset_id)` 主键进行逐项对比。
 
 > [!IMPORTANT]
 > **比赛原始版本与当前开发版本严格分离。** `competition/v38-final` 固定保存最终参赛快照；README 中的 **7.27 / 10** 赛事成绩只对应该快照，不代表当前 `main` 已获得赛事重新评测。
@@ -64,19 +62,6 @@
 | `feature/*`、`fix/*`、`docs/*` | 单项开发分支 | 从 `main` 创建，经 CI 和 Pull Request 合回 `main` |
 
 后续版本会明确标注为“基于 v38 的赛后迭代”，不会把新版本能力或测试结果追溯套用到原始比赛成绩上。
-
-## 基准指标
-
-仓库将检测器代码版本与数据集评测快照分开记录，避免把赛事官方分数、赛后数据集结果和当前主线能力混为一谈。
-
-首个可比较快照是 [`benchmarks/v38/`](benchmarks/v38/README.md)：
-
-| 评测套件 | 评估单元 | 实际扫描 | 说明 |
-| --- | ---: | ---: | --- |
-| 本地 malicious-skills corpus | 13 | 63,707 | 11 个单元完成；2 个只有元数据，未伪造检测结果 |
-| PoisonedSkills | 1 | 1,070 | 890 个判为 `malicious`，180 个漏检；严格召回率 83.18%，F2 86.07% |
-
-完整逐数据集指标见 [`metrics.csv`](benchmarks/v38/metrics.csv)，检测器哈希、构建环境和数据源固定版本见 [`manifest.json`](benchmarks/v38/manifest.json)。不同数据集存在样本重叠，且部分单元只有恶意正样本，因此不报告跨数据集总分；后续版本应新增独立目录，不覆盖历史快照。
 
 ## 快速开始
 
