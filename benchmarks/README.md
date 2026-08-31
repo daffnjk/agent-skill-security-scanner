@@ -1,21 +1,26 @@
-# Benchmark baselines
+# 版本化评测基准
 
-This directory stores immutable, versioned metric snapshots for comparing detector releases.
+本目录保存不可变、可追溯的版本化指标快照，用于观察不同检测器版本在固定数据集与固定材料化口径下的表现。
 
-Each `benchmarks/<version>/` directory contains:
+当前已发布基准：
 
-- `metrics.csv`: one normalized row per dataset evaluation unit;
-- `manifest.json`: detector, dataset, runner, and artifact provenance;
-- `source_revisions.tsv`: pinned upstream dataset revisions;
-- `README.md`: scope, metric definitions, and limitations.
+- [v38 本地评测基准](v38/README.md)：13 个本地语料评估单元及独立 PoisonedSkills 正样本集；完整机器可读指标见 [`v38/metrics.csv`](v38/metrics.csv)。
 
-Rows are compared by the composite key `(suite, dataset_id)`. Do not aggregate efficacy across datasets: several benchmark families reuse or overlap samples. Runtime is informational and should only be compared on equivalent hardware and input materializations.
+每个 `benchmarks/<version>/` 目录包含：
 
-## Metric conventions
+- `metrics.csv`：每个数据集评估单元一行的标准化指标；
+- `manifest.json`：检测器、数据集、运行器和产物来源信息；
+- `source_revisions.tsv`：固定的上游数据集版本；
+- `README.md`：数据集范围、全部指标、口径和限制。
 
-- **Strict:** only `verdict=malicious` is positive.
-- **Screening:** `verdict=malicious` or `verdict=suspicious` is positive.
-- Empty metrics mean the dataset was not scannable from the available artifact.
-- `precision_applicable=false` means the unit has no benign negative samples, so mathematical precision does not measure false-positive behavior.
+跨版本比较使用复合键 `(suite, dataset_id)` 对齐。不同基准家族可能复用或重叠样本，因此不得把各数据集结果汇总成一个全局有效性分数。运行时间仅作记录，只有在硬件和输入材料化方式一致时才可比较。
 
-For a new detector release, copy the same schema into a new version directory, retain the pinned dataset revisions where possible, and document every corpus or materialization change in its manifest.
+## 指标约定
+
+- **严格口径**：只有 `verdict=malicious` 视为阳性。
+- **筛查口径**：`verdict=malicious` 或 `verdict=suspicious` 均视为阳性。
+- 空指标表示当前数据快照没有可供检测器扫描的 Skill 正文。
+- `precision_applicable=false` 表示该评估单元没有良性负样本，数学精确率不能衡量误报行为。
+- 只有正样本的数据集主要用于评价召回，不能用于评价特异度或误报率。
+
+发布新检测器版本时，应沿用相同 CSV 字段创建新的版本目录；尽可能保持数据集版本和材料化方式不变，并在 manifest 与 README 中明确记录任何变化。
