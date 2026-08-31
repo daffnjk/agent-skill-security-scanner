@@ -13,7 +13,7 @@
 [![Competition baseline](https://img.shields.io/badge/competition-v38%20frozen-8250df)](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
 [![License](https://img.shields.io/badge/license-MIT-f0b429)](LICENSE)
 
-[项目定位](#项目定位) · [快速开始](#快速开始) · [输出与退出语义](#输出与退出语义) · [检测范围](#检测范围) · [版本路线](#版本路线) · [竞赛成绩](#竞赛成绩) · [English](README_EN.md)
+[项目定位](#项目定位) · [v38 本地评测](#v38-本地评测) · [快速开始](#快速开始) · [输出与退出语义](#输出与退出语义) · [检测范围](#检测范围) · [版本路线](#版本路线) · [竞赛成绩](#竞赛成绩) · [English](README_EN.md)
 
 </div>
 
@@ -26,6 +26,21 @@
 
 > [!NOTE]
 > 这是启发式静态分析工具。结果用于定位安全评审线索，不能替代沙箱、来源校验、签名验证、运行时监控和人工审查。
+
+## v38 本地评测
+
+冻结的 `competition/v38-final` 已在本地恶意 skills 语料上完成可复现的离线静态评测：13 个评估单元中 11 个完成扫描、2 个仅含元数据，共执行 **63,707** 次样本扫描；另对 PoisonedSkills 的 **1,070** 个正式恶意样本完成全量扫描。所有单元测试和内置回归样本在评测前均通过。
+
+| 评估单元 | 严格精确率 | 严格召回率 | 严格 F2 | 筛查召回率 | 说明 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Agent Skill Malware | 71.18% | 97.58% | 90.84% | 97.58% | 含良性负样本 |
+| SkillTrustBench | 73.52% | 96.40% | 90.75% | 98.36% | 二分类指标排除上游 `suspicious` 标签 |
+| Malicious Skill Bench（完整包） | 不适用 | 82.29% | 85.31% | 84.73% | 仅恶意正样本 |
+| Malicious Skill Bench（正文） | 83.45% | 48.99% | 53.40% | 52.64% | 含良性负样本 |
+| SkillGuard v2 | 32.82% | 20.79% | 22.44% | 21.23% | 含良性负样本 |
+| PoisonedSkills | 不适用 | 83.18% | 86.07% | 83.18% | 1,070 个恶意正样本；检出 890，漏检 180 |
+
+“严格”只将 `malicious` 视为阳性；“筛查”同时将 `malicious` 和 `suspicious` 视为阳性。仅正样本数据集不能评价误报率或有意义的精确率；由于不同数据集存在重叠，本项目不报告跨数据集全局总分。完整 13 单元指标、版本和安全口径见 [`benchmarks/v38`](benchmarks/v38/README.md)。
 
 ## 项目定位
 
