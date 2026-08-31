@@ -2,130 +2,36 @@
 
 # Agent Skill Security Scanner
 
-### Offline, explainable, multi-layer static analysis for the Agent Skill supply chain
+### Understand what a Skill does before you run it
 
-**Final submission to Track B of the inaugural 2026 Volcengine AI Security Challenge: `7.27 / 10`, final rank `20+`. The exact v38 / recall micro-loop 115 competition build is now open source.**
+Offline static security analysis for Agent Skills, MCP tool packages, IDE rules, and plugin bundles.
 
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
-[![Track B Score](https://img.shields.io/badge/Track_B_score-7.27%2F10-8250df)](#final-competition-result)
-[![Final Rank](https://img.shields.io/badge/final_rank-20%2B-f0b429)](#final-competition-result)
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Offline](https://img.shields.io/badge/runtime-offline-1f883d)](Dockerfile)
-[![Deterministic](https://img.shields.io/badge/output-deterministic-0969da)](#output)
 [![License](https://img.shields.io/badge/license-MIT-f0b429)](LICENSE)
 
-[Final result](#final-competition-result) · [Quick start](#quick-start) · [Why it stands out](#why-it-stands-out) · [Coverage](#coverage) · [Architecture](#architecture) · [中文](README.md)
+[Quick start](#quick-start) · [Core capabilities](#core-capabilities) · [Coverage](#coverage) · [How it works](#how-it-works) · [Competition result](#competition-result) · [中文](README.md)
 
 </div>
 
-`skillscan` audits AI Agent Skills, MCP-style tool packages, IDE rules, and plugin bundles **without installing, importing, or executing them**. It uses file-level signals, cross-file behavior chains, metadata-to-code contradictions, guarded recall promotion, and deterministic root-cause AST selection to emit reproducible tri-state verdicts with evidence—without an external API or model weights.
+`skillscan` audits manifests, code, documentation, CI workflows, container files, and project auto-run configuration **without installing, importing, or executing the package**. It detects cross-file behavior chains, contradictions between metadata and runtime behavior, and common Agent Skill supply-chain risks.
+
+Each Skill receives a `benign`, `suspicious`, or `malicious` verdict, one primary OWASP Agentic Skills Top 10 category, and reviewable evidence. The scanner is written in Go, has no external API, model-weight, or third-party Go module dependency, and works well for local review, CI gates, and isolated environments.
 
 > [!IMPORTANT]
-> This is a heuristic static-analysis tool. Findings are review leads, not final proof that a package is safe or malicious. Never execute an untrusted Skill merely to validate an alert.
+> This is a heuristic static-analysis tool. Findings are security-review leads, not a replacement for sandboxing, provenance checks, signature verification, or human review.
 
-## Final competition result
+## Core capabilities
 
-> [!NOTE]
-> **The v38 / recall micro-loop 115 source code in this repository is the final build submitted at the competition deadline and evaluated for the result below. It is not a post-event rewrite or an unscored successor.**
-
-| Scoring dimension | Official weight | Final weighted points | Maximum points | Share of maximum* |
-| --- | ---: | ---: | ---: | ---: |
-| Detection quality | 55% | **4.34** | 5.50 | about 78.9% |
-| Explainability | 20% | **1.10** | 2.00 | 55.0% |
-| Runtime robustness | 15% | **0.83** | 1.50 | about 55.3% |
-| Performance | 10% | **1.00** | 1.00 | **100%** |
-| **Total** | **100%** | **7.27** | **10.00** | **72.7%** |
-
-**Final rank: 20+.** The published weighted components reconcile exactly: `4.34 + 1.10 + 0.83 + 1.00 = 7.27`.
-
-\* Percentages are simple ratios calculated from the reported weighted points and their maximum contribution. They are not additional official raw metrics.
-
-The score profile makes the engineering trade-offs visible: performance received full points and detection quality contributed most of the total, while explainability and runtime robustness remain the clearest areas for further measurable improvement. The repository presents the actual competition result rather than substituting synthetic benchmarks or post-event assumptions.
-
-## Why it stands out
-
-| Capability | Implementation |
+| Capability | What it provides |
 | --- | --- |
-| **Behavior chains, not isolated keywords** | Correlates credential access, exfiltration sinks, command execution, install hooks, dynamic loading, and permission declarations |
-| **Cross-file analysis** | Connects manifests, code, documentation, CI workflows, container files, and project auto-run configuration |
-| **Offline and deterministic** | A single Go binary, zero third-party Go modules, no external API, no model weights, and no runtime network requirement |
-| **Recall-oriented with controls** | F₂-driven high-signal additions are constrained by strong-evidence thresholds, document/test dampening, and a guarded promotion gate |
-| **Explainable root cause** | Emits one primary `AST01`–`AST10` category and human-readable evidence for every non-benign result |
-| **Bounded resources and failure containment** | Per-file, per-skill, and blob-count limits; per-skill parser recovery; atomic result-file commit |
-| **Competition-compatible I/O** | `/data/skills/{skill_id}/` to `/output/results.jsonl`, BusyBox runtime, and non-root `USER 1000` |
-| **Auditable final-build provenance** | The open-source code and final competition submission are both v38 / loop 115, with the score and component breakdown disclosed here |
-
-### Verifiable engineering facts
-
-| Item | Current implementation |
-| --- | --- |
-| Language | Go 1.23+ |
-| Third-party Go modules | 0 |
-| External APIs / model weights | 0 / 0 |
-| Verdicts | `benign` / `suspicious` / `malicious` |
-| Primary category | `benign` or `ast01`–`ast10` |
-| Per-file retained data | Up to 1 MiB, sampled from head and tail |
-| Per-skill retained text | Up to 24 MiB |
-| Per-skill retained blobs | Up to 4,096 |
-| Historical v38 synthetic benchmark | 4,000 skills in about 3.8 seconds, about 21.5 MiB max RSS* |
-
-\* Historical, hardware- and corpus-specific, and not the official competition performance component. Re-benchmark on your own workload. See [PERFORMANCE.md](PERFORMANCE.md).
-
-## Competition origin and version evolution
-
-The project originated in **Track B (Blue Team Detection Challenge) of the inaugural 2026 Volcengine AI Security Challenge**. Entrants submitted Dockerized Skill scanners evaluated on hidden benign, suspicious, and malicious samples across:
-
-- **55% detection quality**, centered on recall-weighted F₂;
-- **10% performance**, including runtime and token efficiency;
-- **20% explainability**, based on exact primary OWASP AST category matching;
-- **15% runtime robustness**, including completion and failure handling.
-
-The technical choice was deliberate: instead of depending on an online LLM, the engine goes deep on static behavior semantics, cross-file correlation, deterministic AST selection, and reproducible output under strict resource constraints.
-
-### Evolution before the final submission
-
-| Stage | Positioning | Main changes |
-| --- | --- | --- |
-| v32–v35 | Robustness and specificity hardening | Dual-profile collection, guarded promotion, UTF-16 and edge formats, boolean permission semantics, atomic output |
-| v36–v37 | F₂ edge-recall hardening | Credential exfiltration, WebSocket C2, local agent control, CI/supply-chain execution, cross-platform metadata loss |
-| **v38 / loop 115** | **Final competition submission and current open-source baseline** | IDE/project auto-run hijacking, mutable build entrypoints, encoding evasion, brand impersonation, Rust/non-Python exfiltration, clearer evidence prefixes; final **7.27 / 10, rank 20+** |
-
-See [docs/design.md](docs/design.md), [docs/competition.md](docs/competition.md), and [CHANGELOG.md](CHANGELOG.md).
-
-## Architecture
-
-```mermaid
-flowchart LR
-    A["Skill package<br/>manifest · docs · code · CI · container config"] --> B["Bounded dual-profile collector<br/>conservative + broader explain view"]
-    B --> C["High-signal file rules"]
-    B --> D["Metadata and code semantics"]
-    C --> E["Cross-file behavior correlation"]
-    D --> E
-    E --> F["F₂-oriented calibration<br/>strong evidence + document dampening"]
-    F --> G["Guarded explain-promotion gate"]
-    G --> H["Deterministic root-cause AST selection"]
-    H --> I["Tri-state verdict + evidence"]
-    I --> J["Atomic results.jsonl commit"]
-```
-
-The scanner first bounds input, then extracts concrete findings, reconstructs cross-file chains, permits broader-view promotion only with strong evidence, and finally emits one deterministic root-cause category.
-
-## Coverage
-
-| Category | Risk | Representative coverage |
-| --- | --- | --- |
-| `AST01` | Malicious Skills | Credential, browser, wallet, cloud-token, and workspace exfiltration; reverse channels; persistence; agent-facing execution lures |
-| `AST02` | Supply Chain Compromise | Install/build hooks, mutable versions, alternate registries, dependency confusion, CI download-and-execute, project auto-run config |
-| `AST03` | Over-Privileged Skills | Broad filesystem, network, shell, host, container, or sensitive-data permissions, with explicit-false handling |
-| `AST04` | Insecure Metadata | Hidden instructions, bidi/control text, HTML/CSS concealment, tool-description injection, metadata/runtime contradictions, brand impersonation |
-| `AST05` | Unsafe Deserialization | YAML/Pickle/node-serialize-style payloads, prototype pollution, and execution-sensitive config injection |
-| `AST06` | Weak Isolation | Docker socket, privileged containers, infrastructure control planes, and local Agent/MCP control hijacking |
-| `AST07` | Update Drift | Remote plugin/config/manifest/module hot reload, self-update after scanning, and integrity drift |
-| `AST08` | Poor Scanning | Encoded reconstruction combined with eval/exec, remote loading, or exfiltration |
-| `AST09` | No Governance | Missing audit, inventory, approval, and logging signals used as weak modifiers rather than standalone malicious drivers |
-| `AST10` | Cross-Platform Reuse | Security-metadata loss, widened target permissions, reusable credential/session material, and policy weakening across platforms |
-
-The scanner retains a `suspicious` state so that vulnerable or over-privileged design is not automatically equated with malicious intent.
+| **Behavior-chain detection** | Correlates credential access, exfiltration, command execution, install hooks, dynamic loading, and permission declarations instead of judging isolated keywords |
+| **Cross-file analysis** | Connects manifests, code, docs, CI, Dockerfiles, and IDE/project configuration to reconstruct distributed risk chains |
+| **Explainable results** | Selects one primary `AST01`–`AST10` category for each non-benign result and reports relevant files and behavioral evidence |
+| **Offline and deterministic** | A single Go binary with no external API or model weights; identical input produces stable output |
+| **Bounded resource use** | Caps per-file and per-Skill text plus retained file count; skips binaries, archives, dependency trees, and common caches |
+| **Safe inspection** | Reads packages as data, does not execute embedded scripts, and does not contact package-declared URLs |
 
 ## Quick start
 
@@ -140,7 +46,7 @@ make test
 make selftest
 ```
 
-Scan a directory containing one subdirectory per Skill:
+Each child directory under the input path represents one Skill:
 
 ```text
 skills/
@@ -151,6 +57,8 @@ skills/
     ├── package.json
     └── index.js
 ```
+
+Run a scan:
 
 ```bash
 mkdir -p out
@@ -172,11 +80,11 @@ docker run --rm \
   skillscan:local
 ```
 
-The runtime stage uses BusyBox and UID 1000. The scanner reads package content as data; it does not execute embedded commands or contact package URLs.
+The runtime image uses BusyBox and runs as non-root UID 1000.
 
 ## Output
 
-One JSON object is emitted for each input directory:
+The scanner emits one JSON object per Skill:
 
 ```json
 {"skill_id":"chain-supply-update","verdict":"malicious","engine_category":"ast02","evidence_text":"OWASP AST02 ..."}
@@ -187,46 +95,90 @@ One JSON object is emitted for each input directory:
 | `skill_id` | Input directory name |
 | `verdict` | `benign`, `suspicious`, or `malicious` |
 | `engine_category` | Primary `ast01`–`ast10` category, or `benign` |
-| `evidence_text` | Concise behavioral basis with relevant file context |
+| `evidence_text` | Behavioral basis and relevant file context |
 
-Output is written to a temporary file and committed as `results.jsonl` to reduce partial-result corruption.
+Results are written to a temporary file and atomically committed as `results.jsonl` to reduce partial-output corruption.
 
-## Use cases
+## Coverage
 
-- Pre-publication scanning for Skill or plugin registries;
-- Local review before enterprise adoption of third-party Skills;
-- CI gates for Skills, MCP configuration, IDE rules, and project auto-run configuration;
-- Dataset regression, rule-quality evaluation, and false-positive analysis;
-- Isolated environments where cloud APIs and model calls are not allowed.
+| Category | Risk | Representative coverage |
+| --- | --- | --- |
+| `AST01` | Malicious Skills | Credential, browser, wallet, cloud-token, and workspace exfiltration; reverse channels; persistence; agent-facing execution lures |
+| `AST02` | Supply Chain Compromise | Install/build hooks, mutable versions, alternate registries, dependency confusion, CI download-and-execute, project auto-run config |
+| `AST03` | Over-Privileged Skills | Broad filesystem, network, shell, host, container, or sensitive-data permissions, with explicit-false handling |
+| `AST04` | Insecure Metadata | Hidden instructions, bidi/control text, HTML/CSS concealment, tool-description injection, metadata/runtime contradictions, brand impersonation |
+| `AST05` | Unsafe Deserialization | YAML/Pickle/node-serialize-style payloads, prototype pollution, and execution-sensitive config injection |
+| `AST06` | Weak Isolation | Docker socket, privileged containers, infrastructure control planes, and local Agent/MCP control hijacking |
+| `AST07` | Update Drift | Remote plugin/config/manifest/module hot reload, post-scan self-update, and integrity drift |
+| `AST08` | Poor Scanning | Encoded reconstruction combined with `eval`/`exec`, remote loading, or exfiltration |
+| `AST09` | No Governance | Missing audit, inventory, approval, and logging signals used as weak modifiers rather than standalone malicious drivers |
+| `AST10` | Cross-Platform Reuse | Security-metadata loss, widened target permissions, reusable credential/session material, and policy weakening across platforms |
 
-The companion traceable dataset catalog is [`agent-skill-security-datasets`](https://github.com/daffnjk/agent-skill-security-datasets).
+The `suspicious` state separates risky or vulnerable design from a concrete malicious behavior chain.
 
-## Tests and reproducibility
+## How it works
+
+```mermaid
+flowchart LR
+    A["Skill package<br/>manifest · docs · code · CI · config"] --> B["Bounded file collection"]
+    B --> C["High-signal file rules"]
+    B --> D["Metadata and code semantics"]
+    C --> E["Cross-file behavior correlation"]
+    D --> E
+    E --> F["Evidence gates and doc dampening"]
+    F --> G["Deterministic primary AST selection"]
+    G --> H["Verdict + Evidence"]
+```
+
+The scanner bounds input first, extracts file-level signals, and reconstructs behavior across files. A broader recall path may promote a benign result only when strong evidence and a minimum category score are both present. Deterministic rules then select one primary AST category.
+
+See [docs/design.md](docs/design.md) for rule design and version history.
+
+## Engineering properties
+
+| Item | Current implementation |
+| --- | --- |
+| Language | Go 1.23+ |
+| Third-party Go modules | 0 |
+| External APIs / model weights | 0 / 0 |
+| Per-file retained data | Up to 1 MiB, sampled from head and tail |
+| Per-Skill retained text | Up to 24 MiB |
+| Per-Skill retained files | Up to 4,096 |
+| Runtime | Local binary or Docker; no network required |
+
+The historical v38 synthetic benchmark scanned 4,000 Skills in about 3.8 seconds with about 21.5 MiB maximum RSS. Hardware and corpus structure affect this result; benchmark your own workload before deployment. See [PERFORMANCE.md](PERFORMANCE.md).
+
+## Competition result
+
+The project originated in **Track B (Blue Team Detection Challenge) of the inaugural 2026 Volcengine AI Security Challenge**. The current open-source baseline is the final competition submission, **v38 / recall micro-loop 115**.
+
+| Detection quality | Explainability | Runtime robustness | Performance | Total | Final rank |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4.34 / 5.50 | 1.10 / 2.00 | 0.83 / 1.50 | 1.00 / 1.00 | **7.27 / 10** | **20+** |
+
+See [docs/competition.md](docs/competition.md) for scoring definitions, version provenance, and public sources.
+
+## Tests and documentation
 
 ```bash
 go test ./...
 bash scripts/selftest.sh
 ```
 
-Fixtures use inert strings, example domains, and temporary directories. Tests include both malicious chains and nearby benign controls so that recall improvements do not silently destroy specificity.
+The self-test includes malicious chains, suspicious configurations, and nearby benign controls. Fixtures are read as inert text and are never executed.
 
-- Design and rule evolution: [docs/design.md](docs/design.md)
-- Performance and resource bounds: [PERFORMANCE.md](PERFORMANCE.md)
-- Self-test coverage: [SELFTEST.md](SELFTEST.md)
-- Contribution policy: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Vulnerability reporting: [SECURITY.md](SECURITY.md)
+- [Design and rule evolution](docs/design.md)
+- [Competition result and scoring](docs/competition.md)
+- [Performance and resource limits](PERFORMANCE.md)
+- [Self-test coverage](SELFTEST.md)
+- [Contribution guide](CONTRIBUTING.md)
+- [Security reporting](SECURITY.md)
+
+The companion traceable dataset catalog is [`agent-skill-security-datasets`](https://github.com/daffnjk/agent-skill-security-datasets).
 
 ## Limitations
 
-- Static string and behavior-chain analysis can produce false positives and false negatives.
+- Static rules and behavior-chain analysis can produce false positives and false negatives.
 - Encrypted, dynamically generated, deeply obfuscated, binary, or unsupported content may evade inspection.
-- A `benign` verdict is not a security guarantee and does not replace sandboxing, provenance checks, signature verification, or human review.
-- The repository does not contain hidden competition samples, answer keys, internal evaluation data, or unpublished material.
+- A `benign` verdict is not a security guarantee or sufficient reason to execute an untrusted Skill.
 
-## License and independence
-
-Licensed under the [MIT License](LICENSE).
-
-This is an independently maintained, unofficial participant project. It does not represent or imply endorsement by Volcengine, the competition organizers, or OWASP. Third-party names are used only for compatibility and security-research context.
-
-Competition context: [event website](https://skill-ctf.clsadp.com/); participation and top-score figures: [public post-event recap](https://security.zone.ci/secarticles/wx/547105.html).
