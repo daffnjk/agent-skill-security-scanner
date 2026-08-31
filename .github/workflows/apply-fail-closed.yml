@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   apply:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -23,6 +24,8 @@ jobs:
         run: |
           python3 scripts/patch_fail_closed.py
           python3 scripts/patch_fail_closed_support.py
+          # Workflow files are updated separately through the GitHub connector.
+          git checkout -- .github/workflows/ci.yml
           gofmt -w cmd/detector
       - name: Validate implementation
         run: |
@@ -35,7 +38,6 @@ jobs:
       - name: Commit integrated implementation
         run: |
           rm scripts/patch_fail_closed.py scripts/patch_fail_closed_support.py
-          rm .github/workflows/apply-fail-closed.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
