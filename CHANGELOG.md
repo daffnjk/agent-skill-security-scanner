@@ -4,6 +4,7 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Change the current `main` branch license from MIT to GNU AGPLv3 (`AGPL-3.0-only`), with separate commercial licensing available, and add contribution licensing terms. The frozen `competition/v38-final` snapshot remains unchanged.
 - Fail closed on missing, unreadable, truncated, symlinked, or opaque scan input; incomplete scans can no longer remain benign.
 - Add `scan-metadata.jsonl` with per-Skill completeness and resource/error telemetry while preserving the four-field competition result schema.
 - Prioritize manifests, lifecycle files, CI/project configuration, and source code before documentation consumes the bounded scan budget.
