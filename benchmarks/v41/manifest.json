@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "detector_version": "v41",
+  "generated_at_utc": "2026-09-02T13:01:59Z",
+  "detector": {
+    "repository": "daffnjk/agent-skill-security-scanner",
+    "git_commit": "6dae4d982223e4bb6528f300f607d163a00b21d5",
+    "main_go_sha256": "48427b279003ded51b90d846961bbd9a3c072715041c42d5b4e633bb1103bbab",
+    "micro_loop_test_sha256": "870a83b76abf0c6cb26d5a3feedf6826c20e22f969b131ec220ab1f1e6f0c1c4",
+    "evaluated_executable_sha256": "51f5ab3d127b414af71d08af16bb8f8ae2be4412bf038cf5776a41725d9c175e",
+    "build_platform": "darwin/arm64",
+    "go_version": "go1.27.0"
+  },
+  "evaluation": {
+    "strict_positive_verdicts": ["malicious"],
+    "screening_positive_verdicts": ["malicious", "suspicious"],
+    "labeled_evaluation_units": 8,
+    "scanned_samples": 56004,
+    "classification_rows_written": 56004,
+    "incomplete_samples": 7,
+    "incomplete_by_dataset": {
+      "agenttrap": 3,
+      "malskillbench": 1,
+      "skillguard_v2": 2,
+      "skilltrustbench": 1
+    },
+    "skilltrustbench_ambiguous_labels_excluded_from_binary_metrics": 1014,
+    "unmatched_labeled_samples": 0,
+    "global_aggregation_permitted": false,
+    "global_aggregation_reason": "Benchmark families overlap or reuse samples and use different labeling policies."
+  },
+  "artifacts": {
+    "generalization_summary_sha256": "90c5e3e25b7e33a66f8f3e5810e4fd78b4f9c86e1893e760fc804243fef376a3"
+  },
+  "safety": "Static scan only. No corpus skill, helper script, PoC, URL, harness, or dataset dependency was executed."
+}

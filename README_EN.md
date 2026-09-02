@@ -138,15 +138,15 @@ After the v41 tag is published, repositories that store Skills can use the bundl
 
 ## Public evaluation
 
-Selected results from the frozen v38 implementation:
+Selected strict-binary results from v41 on frozen public datasets:
 
 | Dataset | Samples | Strict precision | Strict recall | Strict F2 |
 | --- | ---: | ---: | ---: | ---: |
-| Agent Skill Malware | 347 | 71.18% | 97.58% | 90.84% |
-| SkillTrustBench | 5,520 | 73.52% | 96.40% | 90.75% |
-| PoisonedSkills | 1,070 | N/A* | 83.18% | 86.07%* |
+| Agent Skill Malware | 347 | 90.98% | 97.58% | 96.18% |
+| SkillTrustBench | 5,520 | 77.64% | 94.59% | 90.63% |
+| SkillsBench 1,650 | 1,650 | 38.57% | 93.33% | 72.69% |
 
-\* The PoisonedSkills evaluation contains malicious positives only, so it cannot measure false-positive behavior. Datasets may overlap and are not combined into a global score. See [`benchmarks/v38`](benchmarks/v38/README.md) for the complete metrics and materialization notes.
+Datasets may overlap and are not combined into a global score. See [`benchmarks/v41`](benchmarks/v41/README.md) for TP/FP/TN/FN counts, false-positive rates, accuracy, completeness, and materialization notes. The historical v38 snapshot remains under [`benchmarks/v38`](benchmarks/v38/README.md).
 
 The project originated in Track B of the inaugural 2026 Volcengine AI Security Challenge. The final submission is frozen at [`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) with a score of **7.27 / 10**. The current `main` branch is a post-competition development line and has not been re-evaluated in the same environment. See the [competition notes](docs/competition.md).
 

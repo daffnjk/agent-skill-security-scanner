@@ -156,15 +156,15 @@ jobs:
 
 ## 公开评测
 
-冻结的 v38 版本在公开数据集上的部分结果如下：
+v41 在冻结公开数据集上的部分严格口径结果如下：
 
 | 数据集 | 样本数 | 严格精确率 | 严格召回率 | 严格 F2 |
 | --- | ---: | ---: | ---: | ---: |
-| Agent Skill Malware | 347 | 71.18% | 97.58% | 90.84% |
-| SkillTrustBench | 5,520 | 73.52% | 96.40% | 90.75% |
-| PoisonedSkills | 1,070 | 不适用* | 83.18% | 86.07%* |
+| Agent Skill Malware | 347 | 90.98% | 97.58% | 96.18% |
+| SkillTrustBench | 5,520 | 77.64% | 94.59% | 90.63% |
+| SkillsBench 1,650 | 1,650 | 38.57% | 93.33% | 72.69% |
 
-\* PoisonedSkills 在该评测中只有恶意正样本，不能用于评价误报率。不同数据集可能重叠，不计算跨数据集总分。完整指标与材料化口径见 [`benchmarks/v38`](benchmarks/v38/README.md)。
+不同数据集可能重叠，不计算跨数据集总分。完整的 TP/FP/TN/FN、误报率、准确率、完整性统计与材料化口径见 [`benchmarks/v41`](benchmarks/v41/README.md)；历史 v38 快照仍保留在 [`benchmarks/v38`](benchmarks/v38/README.md)。
 
 项目起源于 2026 首届火山引擎 AI 安全攻防挑战赛赛道 B。最终参赛快照保存在 [`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)，赛事得分为 **7.27 / 10**；当前 `main` 是赛后持续迭代版本，尚未在同一赛事环境中重新评测。详情见 [赛事说明](docs/competition.md)。
 
