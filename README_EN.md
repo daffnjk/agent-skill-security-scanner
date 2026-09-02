@@ -4,7 +4,7 @@
 
 ### See what an Agent Skill does before you run it
 
-`skillscan` is a fast, offline, and explainable static security scanner for Agent Skills, MCP tools, IDE rules, and plugin packages.
+`skillscan` is a fast, offline, and explainable static security scanner for Agent Skills, MCP tools, IDE rules, and plugin packages. v41 adds bounded Source → Transform → Sink relationship verification, with cross-dataset regression checks and benign counterexamples as anti-overfitting constraints.
 
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -41,6 +41,7 @@ Rules + cross-file correlation
       ↓
 Risk result ───→ results.jsonl
 Scan state ────→ scan-metadata.jsonl
+Trigger audit ─→ analysis-metadata.jsonl
 ```
 
 ## What it detects
@@ -102,6 +103,8 @@ skills/
 
 `scan-metadata.jsonl` records read errors, resource truncation, sampled files, symbolic links, and opaque payloads. An incomplete scan cannot remain a trustworthy `benign` result.
 
+`analysis-metadata.jsonl` contains v41 trigger layers, scores, decision conditions, rule IDs, and secondary explanations. It is separate from the stable four-field `results.jsonl`, so existing integrations do not need a schema migration.
+
 Exit status is `0` for a complete scan, `2` for startup/input/output errors, and `3` when at least one Skill was not scanned completely. A `suspicious` or `malicious` finding alone does not change the exit status.
 
 ## Docker
@@ -117,6 +120,21 @@ docker run --rm \
 ```
 
 The runtime image uses a non-root user, and scanning requires no network access.
+
+## GitHub Actions gate
+
+After the v41 tag is published, repositories that store Skills can use the bundled composite Action:
+
+```yaml
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+- uses: daffnjk/agent-skill-security-scanner@v0.2.0
+  with:
+    path: skills
+    output: .skillscan
+    fail_on: malicious
+```
+
+`fail_on` accepts `malicious`, `suspicious`, or `never`. Startup failures and incomplete scans always fail closed. The Action builds trusted scanner source and statically reads complete Skill directories; it never executes target Skill code.
 
 ## Public evaluation
 
@@ -146,6 +164,7 @@ make verify
 ```
 
 - [Design and rule evolution](docs/design.md)
+- [v41 GitHub integration design](docs/v41-integration.md)
 - [Complete evaluation data](benchmarks/README.md)
 - [Performance and resource limits](PERFORMANCE.md)
 - [Contribution guide](CONTRIBUTING.md)

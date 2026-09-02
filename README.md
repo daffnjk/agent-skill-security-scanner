@@ -4,7 +4,7 @@
 
 ### 运行 Agent Skill 之前，先看清它会做什么
 
-`skillscan` 是一个离线、快速、可解释的静态安全扫描器，用于检查 Agent Skill、MCP 工具、IDE 规则和插件包。
+`skillscan` 是一个离线、快速、可解释的静态安全扫描器，用于检查 Agent Skill、MCP 工具、IDE 规则和插件包。当前 v41 在原有规则层上增加有界 Source → Transform → Sink 行为关系验证，并以跨数据集回归和良性反例约束误报。
 
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -41,6 +41,7 @@ Skill 目录
    ↓
 风险结论 ───→ results.jsonl
 扫描状态 ───→ scan-metadata.jsonl
+触发审计 ───→ analysis-metadata.jsonl
 ```
 
 ## 能发现什么
@@ -102,6 +103,8 @@ skills/
 
 `scan-metadata.jsonl` 记录读取错误、资源截断、采样文件、符号链接和不透明载荷等完整性信息。不完整扫描不会继续保留可信的 `benign` 结论。
 
+`analysis-metadata.jsonl` 保存 v41 的触发层、分数、判定条件、规则 ID 和次级解释。它与稳定的四字段 `results.jsonl` 分离，因此已有集成无需修改解析协议。
+
 退出码为：`0` 表示扫描完整结束，`2` 表示启动、输入或输出错误，`3` 表示至少一个 Skill 扫描不完整。发现 `suspicious` 或 `malicious` 本身不会改变退出码。
 
 ## Docker
@@ -117,6 +120,39 @@ docker run --rm \
 ```
 
 运行时镜像使用非 root 用户，扫描过程无需联网。
+
+## GitHub Actions 门禁
+
+发布 v41 tag 后，可以在保存 Skills 的仓库中直接使用本项目提供的复合 Action：
+
+```yaml
+name: Scan Agent Skills
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  skill-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: daffnjk/agent-skill-security-scanner@v0.2.0
+        with:
+          path: skills
+          output: .skillscan
+          fail_on: malicious
+```
+
+`fail_on` 支持：
+
+- `malicious`：恶意结论阻断，`suspicious` 仅提示；
+- `suspicious`：恶意或可疑均阻断；
+- `never`：只报告，不根据结论阻断。
+
+扫描启动失败或任何 Skill 扫描不完整时始终失败关闭，不受 `fail_on` 影响。Action 只构建受信任的扫描器源码并静态读取目标文件，不执行被扫描 Skill。PR 检查应传入完整 Skill 目录，而不是只扫描 diff 中的文件。
 
 ## 公开评测
 
@@ -146,6 +182,7 @@ make verify
 ```
 
 - [设计与规则演进](docs/design.md)
+- [v41 与 GitHub 集成设计](docs/v41-integration.md)
 - [完整评测数据](benchmarks/README.md)
 - [性能与资源限制](PERFORMANCE.md)
 - [贡献指南](CONTRIBUTING.md)

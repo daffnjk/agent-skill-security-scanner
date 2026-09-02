@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +22,15 @@ type Result struct {
 	EvidenceText   string `json:"evidence_text"`
 }
 
+type FindingAudit struct {
+	RuleID   string  `json:"rule_id"`
+	Category string  `json:"category"`
+	Weight   float64 `json:"weight"`
+	File     string  `json:"file"`
+	Reason   string  `json:"reason"`
+	Strong   bool    `json:"strong"`
+}
+
 type Finding struct {
 	Category string
 	Weight   float64
@@ -29,21 +40,29 @@ type Finding struct {
 }
 
 type FileBlob struct {
-	Rel    string
-	Lower  string
-	IsDoc  bool
-	IsMeta bool
-	IsCode bool
-	Size   int64
+	Rel      string
+	Lower    string
+	IsDoc    bool
+	IsMeta   bool
+	IsCode   bool
+	IsBinary bool
+	Magic    string
+	Size     int64
 }
 
 type SkillReport struct {
-	Verdict        string
-	EngineCategory string
-	EvidenceText   string
-	Findings       []Finding
-	CategoryScore  map[string]float64
-	Scan           ScanStatus
+	Verdict          string
+	EngineCategory   string
+	EvidenceText     string
+	Findings         []Finding
+	CategoryScore    map[string]float64
+	TriggerLayer     string
+	TriggerScore     float64
+	TriggerCondition string
+	TriggerFindings  []FindingAudit
+	ExplainCategory  string
+	ExplainEvidence  string
+	Scan             ScanStatus
 }
 
 const (
@@ -82,11 +101,13 @@ func main() {
 		fail("discover skills", err)
 	}
 	metadataRows := make([]ScanMetadata, 0, len(skills))
+	auditRows := make([]AnalysisMetadata, 0, len(skills))
 	enc := json.NewEncoder(writer)
 	enc.SetEscapeHTML(false)
 	for _, skill := range skills {
 		report := safeAnalyzeSkill(skill.Path)
 		metadataRows = append(metadataRows, newScanMetadata(skill.ID, report.Scan))
+		auditRows = append(auditRows, newAnalysisMetadata(skill.ID, report))
 		res := Result{
 			SkillID:        skill.ID,
 			Verdict:        report.Verdict,
@@ -108,6 +129,9 @@ func main() {
 	}
 	if err := writeScanMetadata(outputDir, metadataRows); err != nil {
 		fail("write scan-metadata.jsonl", err)
+	}
+	if err := writeAnalysisMetadata(outputDir, auditRows); err != nil {
+		fail("write analysis-metadata.jsonl", err)
 	}
 
 	if incomplete := countIncompleteScans(metadataRows); incomplete > 0 && !partialScansAllowed() {
@@ -159,11 +183,11 @@ func discoverSkills(input string) ([]skillPath, error) {
 		return nil, err
 	}
 	var out []skillPath
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, e := range entries {
+		if !e.IsDir() {
 			continue
 		}
-		name := entry.Name()
+		name := e.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
@@ -177,36 +201,104 @@ func discoverSkills(input string) ([]skillPath, error) {
 }
 
 func analyzeSkill(root string) SkillReport {
+	// v33 keeps the v32 detection policy but collects the v25 and v26 file views
+	// in a single filesystem pass. That removes the largest benign-heavy overhead
+	// without changing the scoring thresholds or the high-confidence promotion gate.
 	baseBlobs, explainBlobs, status := collectFilesDualStatus(root)
 	base := analyzeSkillV25FromBlobs(baseBlobs)
-	result := base
-
 	if base.Verdict == "benign" {
+		// v32: do not fully replace the conservative verdict path, but allow the
+		// broader v26 extractor to promote only high-confidence, behavior-backed
+		// chains that the v25 path intentionally skipped (for example dist/build
+		// extension code, TOML/prototype-pollution loaders, or cloud-metadata pivots).
+		// This recovers recall while keeping weak governance/metadata/cross-platform
+		// hints from turning every benign integration into a malicious row.
 		explain := analyzeSkillV26ExplainFromBlobs(explainBlobs)
 		if shouldPromoteFromExplain(explain) {
-			result = explain
+			explain.TriggerLayer = "explain-promotion"
+			return enforceScanCompleteness(explain, status)
 		}
-		return enforceScanCompleteness(result, status)
-	}
-
-	// Keep high-confidence primary findings without coupling control flow to the
-	// rendered evidence text.
-	if hasPinnedPrimaryFinding(base) {
+		base.ExplainCategory = explain.EngineCategory
+		base.ExplainEvidence = explain.EvidenceText
 		return enforceScanCompleteness(base, status)
 	}
-
+	// v31 adds a small set of high-confidence campaign/config rules to the v25 verdict path.
+	// When one of those rules is the primary reason, keep its AST category/evidence rather
+	// than letting the older v26 explain-only selector rewrite it away.
+	if hasPinnedPrimaryFinding(base) || isV31PrimaryEvidence(base.EvidenceText) {
+		return enforceScanCompleteness(base, status)
+	}
 	explain := analyzeSkillV26ExplainFromBlobs(explainBlobs)
-	if explain.EngineCategory != "" && explain.EngineCategory != "benign" && explain.Verdict != "benign" {
-		base.EngineCategory = explain.EngineCategory
-		base.EvidenceText = explain.EvidenceText
-		if len(explain.CategoryScore) > 0 {
-			base.CategoryScore = explain.CategoryScore
-		}
-		if len(explain.Findings) > 0 {
-			base.Findings = explain.Findings
+	if explain.EngineCategory == "" || explain.EngineCategory == "benign" || explain.Verdict == "benign" {
+		base.ExplainCategory = explain.EngineCategory
+		base.ExplainEvidence = explain.EvidenceText
+		return enforceScanCompleteness(base, status)
+	}
+	// v40: explain-only findings may add context, but they must never replace the
+	// category, evidence, score, or findings that actually triggered the verdict.
+	base.ExplainCategory = explain.EngineCategory
+	base.ExplainEvidence = explain.EvidenceText
+	return enforceScanCompleteness(base, status)
+}
+
+func findingRuleID(f Finding) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.ToLower(f.Category + "|" + f.Reason)))
+	return fmt.Sprintf("%s-%08x", strings.ToUpper(f.Category), h.Sum32())
+}
+
+func auditTriggerFindings(findings []Finding, category string, limit int) []FindingAudit {
+	selected := make([]Finding, 0, len(findings))
+	for _, finding := range findings {
+		if finding.Category == category {
+			selected = append(selected, finding)
 		}
 	}
-	return enforceScanCompleteness(base, status)
+	sort.SliceStable(selected, func(i, j int) bool {
+		if selected[i].Strong != selected[j].Strong {
+			return selected[i].Strong
+		}
+		return selected[i].Weight > selected[j].Weight
+	})
+	if len(selected) > limit {
+		selected = selected[:limit]
+	}
+	audits := make([]FindingAudit, 0, len(selected))
+	for _, finding := range selected {
+		audits = append(audits, FindingAudit{
+			RuleID:   findingRuleID(finding),
+			Category: finding.Category,
+			Weight:   finding.Weight,
+			File:     finding.File,
+			Reason:   finding.Reason,
+			Strong:   finding.Strong,
+		})
+	}
+	return audits
+}
+
+func verdictCondition(verdict string, maxScore float64, categoryStrong int, blended float64, totalStrongCount int) string {
+	if verdict == "malicious" {
+		switch {
+		case maxScore >= 4.65:
+			return "max_score_gte_4.65"
+		case maxScore >= 3.25 && categoryStrong >= 1:
+			return "category_score_gte_3.25_with_strong"
+		case blended >= 5.35:
+			return "blended_score_gte_5.35"
+		case totalStrongCount >= 2:
+			return "multiple_strong_findings"
+		}
+	}
+	if verdict == "suspicious" {
+		if maxScore >= 1.75 {
+			return "max_score_gte_1.75"
+		}
+		if blended >= 2.35 {
+			return "blended_score_gte_2.35"
+		}
+	}
+	return "below_risk_thresholds"
 }
 
 func analyzeSkillV25(root string) SkillReport {
@@ -215,27 +307,37 @@ func analyzeSkillV25(root string) SkillReport {
 }
 
 func analyzeSkillV25FromBlobs(blobs []FileBlob) SkillReport {
-	findings := make([]Finding, 0, 64)
+	findings := make([]Finding, 0, 80)
 
 	for _, b := range blobs {
 		findings = append(findings, analyzeFile(b)...)
 	}
 	findings = append(findings, analyzeCrossFile(blobs)...)
+	findings = append(findings, analyzeBinaryPerimeter(blobs)...)
 	// v38-loop5: conservative multi-file behavior-chain fusion.
 	findings = append(findings, analyzeMicroCrossFile(blobs)...)
+	// v39: verify a bounded set of source -> transform -> sink relations. The
+	// original recall rules remain the candidate layer; verified chains improve
+	// evidence/category precision and provider-matched auth flows receive a very
+	// narrow co-occurrence dampener.
+	flowSummary := analyzeBehaviorIR(blobs)
+	findings = append(findings, flowSummary.Findings...)
 
 	scores := map[string]float64{}
 	strongByCat := map[string]int{}
 	for _, f := range findings {
 		w := applyBenignDampener(f, blobs)
+		flowFactor := behaviorIRWeightFactor(f, flowSummary)
+		w *= flowFactor
 		scores[f.Category] += w
-		if f.Strong {
+		if f.Strong && flowFactor >= 0.5 {
 			strongByCat[f.Category]++
 		}
 	}
 
 	category, maxScore := topCategory(scores)
 	category, maxScore = calibrateCategory(category, maxScore, scores)
+	category, maxScore = calibrateVerifiedFlowCategory(category, maxScore, scores, findings)
 	blended := blendedScore(category, scores)
 
 	// AST09 is treated as a weak governance modifier. Prefer a stronger nearby AST when possible.
@@ -248,34 +350,192 @@ func analyzeSkillV25FromBlobs(blobs []FileBlob) SkillReport {
 	}
 
 	verdict := "benign"
+	allStrong := totalStrong(strongByCat)
 	// Recall-first calibration for Track B: F2 rewards catching malicious skills more
 	// than over-optimizing for precision. Keep suspicious for weak or document-only
 	// evidence, but promote any strong behavior chain to malicious.
-	if maxScore >= 4.65 || (maxScore >= 3.25 && strongByCat[category] >= 1) || blended >= 5.35 || totalStrong(strongByCat) >= 2 {
+	if maxScore >= 4.65 || (maxScore >= 3.25 && strongByCat[category] >= 1) || blended >= 5.35 || allStrong >= 2 {
 		verdict = "malicious"
 	} else if maxScore >= 1.75 || blended >= 2.35 {
 		verdict = "suspicious"
 	}
+	verdict = capDocumentaryVerdict(verdict, category, findings, blobs)
 	if verdict == "benign" {
 		category = "benign"
 	}
 
 	evidence := buildEvidence(verdict, category, findings, scores)
-	return SkillReport{Verdict: verdict, EngineCategory: category, EvidenceText: evidence, Findings: findings, CategoryScore: scores}
+	return SkillReport{
+		Verdict:          verdict,
+		EngineCategory:   category,
+		EvidenceText:     evidence,
+		Findings:         findings,
+		CategoryScore:    scores,
+		TriggerLayer:     "base",
+		TriggerScore:     maxScore,
+		TriggerCondition: verdictCondition(verdict, maxScore, strongByCat[category], blended, allStrong),
+		TriggerFindings:  auditTriggerFindings(findings, category, 8),
+	}
 }
 
 func collectFiles(root string) []FileBlob {
-	base, _, _ := collectFilesDualStatus(root)
-	return base
+	var blobs []FileBlob
+	var total int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
+			return filepath.SkipAll
+		}
+		if err != nil || d == nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if shouldSkipDir(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() <= 0 || total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		binaryCandidate := isExecutableBinaryPath(rel)
+		if (shouldSkipFile(rel) && !binaryCandidate) || (!isInterestingFile(rel) && !binaryCandidate) {
+			return nil
+		}
+		data, err := readFileSampled(path, info.Size(), maxFileBytes)
+		if err != nil || len(data) == 0 {
+			return nil
+		}
+		lower, ok := decodeTextLower(data)
+		magic := ""
+		if binaryCandidate {
+			lower, ok = "", true
+			magic = binaryMagicLabel(data)
+		}
+		if !ok {
+			return nil
+		}
+		if total+int64(len(data)) > maxTotalBytes {
+			return nil
+		}
+		total += int64(len(data))
+		blobs = append(blobs, FileBlob{
+			Rel:      rel,
+			Lower:    lower,
+			IsDoc:    isDocPath(rel),
+			IsMeta:   isManifestPath(rel),
+			IsCode:   isCodePath(rel),
+			IsBinary: binaryCandidate,
+			Magic:    magic,
+			Size:     int64(len(data)),
+		})
+		return nil
+	})
+	sort.Slice(blobs, func(i, j int) bool { return blobs[i].Rel < blobs[j].Rel })
+	return blobs
 }
 
 func collectFilesDual(root string) ([]FileBlob, []FileBlob) {
-	base, explain, _ := collectFilesDualStatus(root)
-	return base, explain
+	var baseBlobs []FileBlob
+	var explainBlobs []FileBlob
+	var baseTotal int64
+	var explainTotal int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		baseFull := baseTotal >= maxTotalBytes || len(baseBlobs) >= maxBlobsPerSkill
+		explainFull := explainTotal >= maxTotalBytes || len(explainBlobs) >= maxBlobsPerSkill
+		if baseFull && explainFull {
+			return filepath.SkipAll
+		}
+		if err != nil || d == nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			// Skip only directories ignored by both profiles. Directories such as dist/
+			// and build/ remain available to the broader v26 view while still being
+			// excluded from the conservative v25 view below.
+			if shouldSkipDir(name) && shouldSkipDirV26(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() <= 0 {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		binaryCandidate := isExecutableBinaryPath(rel)
+		if shouldSkipFile(rel) && !binaryCandidate {
+			return nil
+		}
+		baseCandidate := !pathHasSkippedDir(rel, shouldSkipDir) && (isInterestingFile(rel) || binaryCandidate) && baseTotal < maxTotalBytes && len(baseBlobs) < maxBlobsPerSkill
+		explainCandidate := !pathHasSkippedDir(rel, shouldSkipDirV26) && (isInterestingFileV26(rel) || binaryCandidate) && explainTotal < maxTotalBytes && len(explainBlobs) < maxBlobsPerSkill
+		if !baseCandidate && !explainCandidate {
+			return nil
+		}
+		data, err := readFileSampled(path, info.Size(), maxFileBytes)
+		if err != nil || len(data) == 0 {
+			return nil
+		}
+		lower, ok := decodeTextLower(data)
+		magic := ""
+		if binaryCandidate {
+			lower, ok = "", true
+			magic = binaryMagicLabel(data)
+		}
+		if !ok {
+			return nil
+		}
+		dataLen := int64(len(data))
+		if baseCandidate && baseTotal+dataLen <= maxTotalBytes {
+			baseBlobs = append(baseBlobs, FileBlob{
+				Rel:      rel,
+				Lower:    lower,
+				IsDoc:    isDocPath(rel),
+				IsMeta:   isManifestPath(rel),
+				IsCode:   isCodePath(rel),
+				IsBinary: binaryCandidate,
+				Magic:    magic,
+				Size:     dataLen,
+			})
+			baseTotal += dataLen
+		}
+		if explainCandidate && explainTotal+dataLen <= maxTotalBytes {
+			explainBlobs = append(explainBlobs, FileBlob{
+				Rel:      rel,
+				Lower:    lower,
+				IsDoc:    isDocPath(rel),
+				IsMeta:   isManifestPath(rel),
+				IsCode:   isCodePathV26(rel),
+				IsBinary: binaryCandidate,
+				Magic:    magic,
+				Size:     dataLen,
+			})
+			explainTotal += dataLen
+		}
+		return nil
+	})
+	sort.Slice(baseBlobs, func(i, j int) bool { return baseBlobs[i].Rel < baseBlobs[j].Rel })
+	sort.Slice(explainBlobs, func(i, j int) bool { return explainBlobs[i].Rel < explainBlobs[j].Rel })
+	return baseBlobs, explainBlobs
 }
 
 func analyzeFile(b FileBlob) []Finding {
-	c := b.Lower
+	if b.IsBinary {
+		return []Finding{{"ast01", 2.8, b.Rel, "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion", false}}
+	}
+	rawC := b.Lower
+	c := analysisText(b)
 	rel := b.Rel
 	var f []Finding
 
@@ -300,7 +560,13 @@ func analyzeFile(b FileBlob) []Finding {
 		f = append(f, Finding{"ast01", 5.4, rel, "skill-facing markdown contains an inline base64-decoded shell payload pattern", true})
 	}
 	if markdownCredentialWebhook(c, b) {
-		f = append(f, Finding{"ast01", 5.2, rel, "skill-facing markdown references credential material together with a webhook-style exfiltration endpoint", true})
+		f = append(f, Finding{"ast01", 5.2, rel, "skill-facing markdown contains credential material with a concrete outbound transfer command", true})
+	}
+	if markdownDownloadedScriptExecution(c, b) {
+		f = append(f, Finding{"ast02", 5.7, rel, "downloaded script execution: skill-facing instructions download a script artifact and execute that same artifact without integrity verification", true})
+	}
+	if rsaModularExecutionPayload(rawC, b) {
+		f = append(f, Finding{"ast08", 5.8, rel, "RSA/modular-arithmetic payload reconstructs character codes and passes the hidden result to exec/eval", true})
 	}
 	if remoteInstructionExecution(c, b) {
 		f = append(f, Finding{"ast07", 5.9, rel, "remote skill instruction execution: a skill-facing file fetches remote markdown/config and sources or executes it, allowing behavior to drift after review", true})
@@ -320,11 +586,21 @@ func analyzeFile(b FileBlob) []Finding {
 	if hiddenPromptPayload(c, b) {
 		f = append(f, Finding{"ast04", 5.0, rel, "hidden prompt payload: skill-facing instructions impersonate system/developer policy while directing command execution, credential access, or exfiltration", true})
 	}
+	if concealedOperationalExecution(c, b) {
+		f = append(f, Finding{"ast08", 5.2, rel, "concealed operational execution: skill instructions require a script, shell, or helper command to run without user-visible disclosure or approval", true})
+	}
+	if destructiveCleanupWithoutApproval(c, b) {
+		f = append(f, Finding{"ast01", 3.2, rel, "irreversible cleanup directive: skill instructions automatically delete, purge, wipe, or remove original user files without approval in the same action block", false})
+	}
 	if reverseShellBackdoor(c, b) {
 		f = append(f, Finding{"ast01", 6.4, rel, "reverse shell or backdoor payload: skill material contains netcat/dev-tcp/socat/powershell command-and-control execution patterns", true})
 	}
 	if conditionalOrDelayedPayload(c, b) {
-		f = append(f, Finding{"ast08", 5.4, rel, "conditional or delayed malicious payload: suspicious credential/network/command behavior is gated on time, host, platform, CI, sandbox, or delayed execution checks", true})
+		w, strong := 5.4, true
+		if b.IsDoc && !concreteRiskFence(c) {
+			w, strong = 3.2, false
+		}
+		f = append(f, Finding{"ast08", w, rel, "conditional or delayed malicious payload: suspicious credential/network/command behavior is gated on time, host, platform, CI, sandbox, or delayed execution checks", strong})
 	}
 	if cryptoWalletExfiltration(c, b) {
 		f = append(f, Finding{"ast01", 5.8, rel, "crypto wallet exfiltration: wallet seed, keypair, browser-wallet, or keystore material is read near outbound network or command execution behavior", true})
@@ -336,12 +612,16 @@ func analyzeFile(b FileBlob) []Finding {
 		f = append(f, Finding{"ast01", 5.7, rel, "browser extension credential bridge: extension permissions or scripts can read cookies/storage/tabs on all URLs and forward captured data to a remote channel", true})
 	}
 	if cloudMetadataOrLocalhostPivot(c, b) {
-		f = append(f, Finding{"ast06", 5.6, rel, "cloud metadata or localhost pivot: skill material reaches host-local, cloud metadata, Kubernetes, Docker, Redis, etcd, or admin endpoints across an isolation boundary", true})
+		w, strong := 5.6, true
+		if b.IsDoc && !hasAny(c, []string{"requests.post", "curl -d", " --data", "webhook", "upload", "send to", "exfiltrate", "websocket.send"}) {
+			w, strong = 3.2, false
+		}
+		f = append(f, Finding{"ast06", w, rel, "cloud metadata or localhost pivot: skill material reaches host-local, cloud metadata, Kubernetes, Docker, Redis, etcd, or admin endpoints across an isolation boundary", strong})
 	}
 	if prototypePollutionOrConfigInjection(c, b) {
 		f = append(f, Finding{"ast05", 5.2, rel, "prototype pollution or config injection: untrusted JSON/TOML/YAML/config input can merge into object prototypes or execution-sensitive options", true})
 	}
-	if invisibleInstructionSmuggling(c, b) {
+	if invisibleInstructionSmuggling(rawC, b) {
 		f = append(f, Finding{"ast04", 5.3, rel, "invisible instruction smuggling: skill-facing metadata hides policy-override or execution instructions in zero-width, bidi, HTML-comment, CSS-hidden, or encoded text", true})
 	}
 	if hotReloadRemoteModule(c, b) {
@@ -360,7 +640,11 @@ func analyzeFile(b FileBlob) []Finding {
 		f = append(f, Finding{"ast01", 5.8, rel, "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data", true})
 	}
 	if localAgentControlHijack(c, b) {
-		f = append(f, Finding{"ast06", 5.6, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", true})
+		w, strong := 5.6, true
+		if b.IsDoc && !hasAny(c, []string{"websocket.send", "send({", "send(json", "/execute", "/command", "method: execute", `"method":"execute"`, `"method": "execute"`}) {
+			w, strong = 3.2, false
+		}
+		f = append(f, Finding{"ast06", w, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", strong})
 	}
 	if unsafeDeserializePayload(c, b) {
 		f = append(f, Finding{"ast05", 5.7, rel, "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads", true})
@@ -401,6 +685,12 @@ func analyzeFile(b FileBlob) []Finding {
 	if localBinaryExecutionLure(c, b) {
 		f = append(f, Finding{"ast01", 5.0, rel, "skill-facing instructions require running a bundled local binary or installer helper before use, creating an opaque execution path", true})
 	}
+	if markdownOpaqueBinaryDownload(c, b) {
+		f = append(f, Finding{"ast01", 5.5, rel, "active skill instructions download a platform-specific opaque binary, mark it executable, and install or launch it without an integrity check", true})
+	}
+	if bundledOpaqueBinaryExecution(rawC, b) {
+		f = append(f, Finding{"ast01", 5.3, rel, "skill instructions discover bundled native binaries, make them executable, and launch them with user-environment access without provenance or integrity verification", true})
+	}
 	if startupPersistencePayload(c, b) {
 		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true})
 	}
@@ -434,7 +724,11 @@ func analyzeFile(b FileBlob) []Finding {
 	}
 	// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
 	if microPIIOutboundChain(c, b) {
-		f = append(f, Finding{"ast03", 5.0, rel, "PII or personal-data collection is paired with webhook/upload/POST outbound transfer", true})
+		weight, strong := 3.0, false
+		if privacyEvasionSignal(c) {
+			weight, strong = 5.0, true
+		}
+		f = append(f, Finding{"ast03", weight, rel, "PII or personal-data collection is paired with webhook/upload/POST outbound transfer", strong})
 	}
 	if microBrowserWalletStoreExfil(c, b) {
 		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true})
@@ -544,7 +838,11 @@ func analyzeFile(b FileBlob) []Finding {
 	}
 
 	if isolationBoundarySignal(c, b) {
-		f = append(f, Finding{"ast06", 5.0, rel, "references container, host, namespace, mount, or privileged isolation boundary", true})
+		w, strong := 5.0, true
+		if b.IsDoc {
+			w, strong = 2.8, false
+		}
+		f = append(f, Finding{"ast06", w, rel, "references container, host, namespace, mount, or privileged isolation boundary", strong})
 	}
 	if isolationSecretBoundarySignal(c, b) {
 		f = append(f, Finding{"ast06", 5.1, rel, "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary", true})
@@ -588,8 +886,14 @@ func analyzeFile(b FileBlob) []Finding {
 		f = append(f, Finding{"ast09", 2.9, rel, "governance, audit, policy, or guardrail enforcement appears disabled or bypassed", false})
 	}
 
+	credentialAction := (fileRead || hasAny(c, []string{"cat ", "type ", "read ~", "read /", "read the ", "copy the ", "collect ", "extract "})) && (netSink || cmdSink || hasAny(c, []string{"send to", "send it", "upload", "post to", "report externally", "exfiltrate"}))
 	if !benignInstructionalContext(c) && secretRead && hasAny(c, []string{"slack", "github", "aws", "gcp", "azure", "kube", "kubernetes", "docker", "npm", "pypi", "browser", "cookie", "keychain", "ssh"}) {
-		w, strong := 5.2, true
+		// A skill often documents how a provider token is configured. Reference
+		// alone is a risky capability, not evidence of a malicious payload.
+		w, strong := 2.4, false
+		if credentialAction {
+			w, strong = 5.2, true
+		}
 		if b.IsMeta && !b.IsCode {
 			// A manifest that only declares access to cookies/tokens should influence
 			// AST classification, but should not by itself become a malicious finding
@@ -599,14 +903,20 @@ func analyzeFile(b FileBlob) []Finding {
 		f = append(f, Finding{"ast10", w, rel, "references reusable cross-platform credentials, cookies, tokens, or cloud/session material", strong})
 	}
 	if !benignInstructionalContext(c) && hasAny(c, []string{".kube/config", ".docker/config.json", ".npmrc", ".pypirc", ".aws/credentials", ".ssh/id_rsa", "known_hosts", "browser cookies"}) {
-		w, strong := 5.1, true
+		w, strong := 3.0, false
+		if credentialAction {
+			w, strong = 5.1, true
+		}
 		if b.IsMeta && !b.IsCode {
 			w, strong = 3.2, false
 		}
 		f = append(f, Finding{"ast10", w, rel, "targets common cross-platform credential/session files", strong})
 	}
 	if !benignInstructionalContext(c) && hasAny(c, []string{".netrc", "git-credentials", "application_default_credentials.json", "gcloud", "azure profile", "azure/accessTokens.json", "auths", "_authtoken", "npm_token", "huggingface token", "keyring", "keytar", "local state", "login data", "cookies sqlite", "actions_id_token_request_token", "aws_web_identity_token_file"}) {
-		w, strong := 5.0, true
+		w, strong := 3.0, false
+		if credentialAction {
+			w, strong = 5.0, true
+		}
 		if b.IsMeta && !b.IsCode {
 			w, strong = 3.2, false
 		}
@@ -790,6 +1100,62 @@ func analyzeCrossFile(blobs []FileBlob) []Finding {
 		f = append(f, Finding{"ast08", 5.2, "scan metadata+code", "metadata advertises a clean/passed scan while skill code contains credential, outbound, decoded, or command-execution behavior", true})
 	}
 	return f
+}
+
+func analyzeBinaryPerimeter(blobs []FileBlob) []Finding {
+	var findings []Finding
+	var binaries []FileBlob
+	var docs []FileBlob
+	for _, b := range blobs {
+		if b.IsBinary {
+			binaries = append(binaries, b)
+		} else if b.IsDoc {
+			docs = append(docs, b)
+		}
+	}
+	for _, binary := range binaries {
+		base := strings.ToLower(filepath.Base(binary.Rel))
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		for _, doc := range docs {
+			c := analysisText(doc)
+			referenced := strings.Contains(c, base) || (len(stem) >= 5 && strings.Contains(c, stem)) || hasAny(c, []string{"bundled binary", "native binary", "native plugin", "precompiled helper"})
+			execute := hasAny(c, []string{"chmod +x", "run ./", "execute ./", "launch ./", "start-process", " --daemon", " --init", "before proceeding", "required helper"})
+			provenance := hasAny(c, []string{"sha256", "sha512", "checksum", "signature verification", "cosign verify", "gpg --verify", "build from source"})
+			if referenced && execute && !provenance {
+				findings = append(findings, Finding{"ast01", 5.5, binary.Rel, fmt.Sprintf("bundled %s executable is referenced by active instructions and launched without a checksum, signature, or source-build provenance", binary.Magic), true})
+				break
+			}
+		}
+	}
+	return findings
+}
+
+func isExecutableBinaryPath(rel string) bool {
+	n := strings.ToLower(rel)
+	for _, ext := range []string{".exe", ".dll", ".so", ".dylib", ".bin", ".elf", ".wasm", ".node", ".class", ".jar"} {
+		if strings.HasSuffix(n, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func binaryMagicLabel(data []byte) string {
+	if len(data) >= 4 {
+		switch {
+		case data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F':
+			return "ELF"
+		case data[0] == 'M' && data[1] == 'Z':
+			return "PE"
+		case data[0] == 0x00 && data[1] == 'a' && data[2] == 's' && data[3] == 'm':
+			return "WebAssembly"
+		case (data[0] == 0xfe && data[1] == 0xed && data[2] == 0xfa) || (data[0] == 0xcf && data[1] == 0xfa && data[2] == 0xed):
+			return "Mach-O"
+		case data[0] == 0xca && data[1] == 0xfe && data[2] == 0xba && data[3] == 0xbe:
+			return "Mach-O/Java"
+		}
+	}
+	return "opaque"
 }
 
 func analyzeMicroCrossFile(blobs []FileBlob) []Finding {
@@ -998,7 +1364,7 @@ var loop16To115Rules = []loopChainRule{
 	{Loop: 79, Category: "ast01", Weight: 5.19, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"native messaging", "native_host", "runtime.connectnative"}, []string{"readfile", "fs.readfile", "open("}, []string{"fetch(", "webhook", "post"}}, Reason: "IDE/browser/platform chain: browser native messaging bridge"},
 	{Loop: 80, Category: "ast01", Weight: 5.22, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"browser control", "playwright", "puppeteer", "cdp"}, []string{"cookies", "localstorage", "login data"}, []string{"webhook", "requests.post", "fetch("}}, Reason: "IDE/browser/platform chain: mcp browser control"},
 	{Loop: 81, Category: "ast10", Weight: 5.25, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"cross-platform", "portable skill", "adapter", "bridge"}, []string{"strip permissions", "fallback permissions", "network: true"}, []string{"filesystem", "all files", "host"}}, Reason: "IDE/browser/platform chain: cross platform permission loss"},
-	{Loop: 82, Category: "ast06", Weight: 5.28, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"same name", "shadow", "override", "higher priority"}, []string{"plugin", "skill", "extension"}, []string{"remote", "download", "load"}}, Reason: "IDE/browser/platform chain: plugin shadowing"},
+	{Loop: 82, Category: "ast06", Weight: 3.10, Strong: false, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"same name", "shadow", "override", "higher priority"}, []string{"plugin", "skill", "extension"}, []string{"remote", "download", "load"}}, Reason: "IDE/browser/platform chain: plugin shadowing"},
 	{Loop: 83, Category: "ast06", Weight: 5.31, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"tool schema", "input_schema", "description"}, []string{"api key", "credential", "token"}, []string{"send to", "webhook", "report"}}, Reason: "IDE/browser/platform chain: tool schema credential coercion"},
 	{Loop: 84, Category: "ast01", Weight: 5.34, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"applescript", "osascript", "uiautomation", "accessibility"}, []string{"keychain", "password", "clipboard"}, []string{"webhook", "curl -d", "requests.post"}}, Reason: "IDE/browser/platform chain: desktop automation keychain"},
 	{Loop: 85, Category: "ast01", Weight: 5.37, Strong: true, PathAny: []string{".js", ".ts", ".py", ".json", ".md", "manifest", "package.json"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"clipboard", "pasteboard", "pyperclip", "navigator.clipboard"}, []string{"readtext", "getdata", "read"}, []string{"webhook", "fetch(", "requests.post"}}, Reason: "IDE/browser/platform chain: clipboard capture outbound"},
@@ -1034,49 +1400,46 @@ var loop16To115Rules = []loopChainRule{
 	{Loop: 115, Category: "ast01", Weight: 5.17, Strong: true, PathAny: []string{".md", ".json", ".yaml", ".yml", ".py", ".js", "manifest"}, ActiveOnly: true, SuppressInstructionalDocs: true, Groups: [][]string{[]string{"migrate", "import from", "reuse"}, []string{"credentials", "tokens", "cookies", "wallet"}, []string{"send", "upload", "webhook"}}, Reason: "cross-platform reuse chain: cross platform credential migration"},
 }
 
-func analyzeLoop16To115File(blob FileBlob) []Finding {
-	content := blob.Lower
-	if content == "" {
+func analyzeLoop16To115File(b FileBlob) []Finding {
+	c := b.Lower
+	if c == "" {
 		return nil
 	}
-	path := strings.ToLower(blob.Rel)
-	active := isRuleActiveMaterial(blob)
-	out := make([]Finding, 0, 8)
-	for _, rule := range loop16To115Rules {
-		if rule.ActiveOnly && !active {
+	path := strings.ToLower(b.Rel)
+	active := b.IsCode || b.IsMeta || isPackagePath(path) || isKnownTextConfigPath(path)
+	out := make([]Finding, 0, 4)
+	for _, r := range loop16To115Rules {
+		documentUpdateCandidate := !active && r.Loop == 86 && isSkillFacingMaterial(b) &&
+			hasAny(c, []string{"after scan", "post-scan", "after approval", "after review"})
+		if r.ActiveOnly && !active && !documentUpdateCandidate {
 			continue
 		}
-		if len(rule.PathAny) > 0 && !hasAny(path, rule.PathAny) {
+		if len(r.PathAny) > 0 && !hasAny(path, r.PathAny) {
 			continue
 		}
-		if rule.SuppressInstructionalDocs && blob.IsDoc && benignInstructionalContext(content) {
+		if r.SuppressInstructionalDocs && b.IsDoc && benignInstructionalContext(c) {
 			continue
 		}
-		matched := true
-		for _, group := range rule.Groups {
-			if !hasAny(content, group) {
-				matched = false
+		ok := true
+		for _, group := range r.Groups {
+			if !hasAny(c, group) {
+				ok = false
 				break
 			}
 		}
-		if matched {
-			out = append(out, Finding{rule.Category, rule.Weight, blob.Rel, fmt.Sprintf("loop%d: %s", rule.Loop, rule.Reason), rule.Strong})
+		if !ok {
+			continue
 		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Strong != out[j].Strong {
-			return out[i].Strong
+		weight, strong := r.Weight, r.Strong
+		if documentUpdateCandidate {
+			// A prose-only update instruction is review-worthy, but it is not by
+			// itself proof of executable post-scan replacement.
+			weight, strong = 3.1, false
 		}
-		if out[i].Weight != out[j].Weight {
-			return out[i].Weight > out[j].Weight
+		out = append(out, Finding{r.Category, weight, b.Rel, fmt.Sprintf("loop%d: %s", r.Loop, r.Reason), strong})
+		if len(out) >= 6 {
+			break
 		}
-		if out[i].Category != out[j].Category {
-			return out[i].Category < out[j].Category
-		}
-		return out[i].Reason < out[j].Reason
-	})
-	if len(out) > 6 {
-		out = out[:6]
 	}
 	return out
 }
@@ -1088,7 +1451,7 @@ func analyzeLoop16To115CrossFile(blobs []FileBlob) []Finding {
 		if b.Lower == "" || (b.IsDoc && benignInstructionalContext(b.Lower)) {
 			continue
 		}
-		if isRuleActiveMaterial(b) {
+		if b.IsCode || b.IsMeta || isPackagePath(b.Rel) || isKnownTextConfigPath(b.Rel) {
 			activeCount++
 			all.WriteString("\n")
 			all.WriteString(strings.ToLower(b.Rel))
@@ -1157,16 +1520,133 @@ func markdownCredentialWebhook(c string, b FileBlob) bool {
 	if benignInstructionalContext(c) {
 		return false
 	}
-	return hasAny(c, []string{"webhook.site", "discord.com/api/webhooks", "hooks.slack.com"}) && hasAny(c, []string{"credential", "credentials", "secret", "api key", "api_key", "token", "cookie", "private key", "seed phrase", ".env"})
+	outbound := hasAny(c, []string{"webhook.site", "discord.com/api/webhooks", "hooks.slack.com", "curl -d", "curl --data", "wget --post-data", "--post-data", "--post-file", "requests.post", "axios.post", "fetch("})
+	credential := hasAny(c, []string{"credential", "credentials", "api secret", "client_secret", "secret_key", "api key", "api_key", "token", "cookie", "private key", "id_rsa", "id_ed25519", "~/.ssh", ".ssh/", "seed phrase", ".env", ".aws/credentials", ".config/gh"})
+	return outbound && credential && lineWindowCooccur(c,
+		[]string{"webhook.site", "discord.com/api/webhooks", "hooks.slack.com", "curl -d", "curl --data", "wget --post-data", "--post-data", "--post-file", "requests.post", "axios.post", "fetch("},
+		[]string{"credential", "credentials", "api secret", "client_secret", "secret_key", "api key", "api_key", "token", "cookie", "private key", "id_rsa", "id_ed25519", "~/.ssh", ".ssh/", "seed phrase", ".env", ".aws/credentials", ".config/gh"}, 6)
+}
+
+func markdownDownloadedScriptExecution(c string, b FileBlob) bool {
+	if benignInstructionalContext(c) || !isSkillFacingMaterial(b) {
+		return false
+	}
+	if hasAny(c, []string{"sha256sum -c", "shasum -a 256", "gpg --verify", "cosign verify", "checksum verified", "verify checksum"}) {
+		return false
+	}
+	for _, line := range strings.Split(c, "\n") {
+		if !hasAny(line, []string{"curl ", "wget ", "invoke-webrequest"}) {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			artifact := strings.Trim(field, "\"'`()[]{};,|")
+			lower := strings.ToLower(artifact)
+			if !(strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".ps1") || strings.HasSuffix(lower, ".js")) {
+				continue
+			}
+			if hasAny(c, []string{"bash " + lower, "sh " + lower, "python " + lower, "python3 " + lower, "powershell " + lower, "node " + lower, "chmod +x " + lower + " && " + lower}) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func benignInstructionalContext(c string) bool {
-	return isBenignInstructionalContext(c)
+	markers := []string{"for educational purposes", "security training", "malware analysis", "example only", "demo only", "test fixture", "unit test", "do not run", "do not execute", "benign example", "sample payload", "security testing", "injection prevention", "command injection prevention", "vulnerability scanning", "owasp top 10"}
+	if !hasAny(c, markers) {
+		return false
+	}
+	// A disclaimer must not suppress a separate, concrete credential-to-network
+	// payload. Keep this exception deliberately narrow so ordinary security
+	// documentation and inert examples retain v41's false-positive protection.
+	for _, line := range strings.Split(c, "\n") {
+		line = strings.TrimSpace(line)
+		if hasAny(line, []string{"requests.post", "requests.put", "axios.post", "fetch(", "curl -d", "webhook"}) &&
+			hasAny(line, []string{"open('.env", "open(\".env", "read .env", "readfile('.env", "readfile(\".env", "id_rsa", "secret_access_key", "api_key", "access_token", "private key"}) &&
+			!hasAny(line, markers) {
+			return false
+		}
+	}
+	return true
+}
+
+// analysisText keeps prose instructions but excludes most illustrative fenced code
+// from Markdown co-occurrence rules. A fence remains active when its surrounding
+// section asks the user/agent to install, authenticate, bootstrap, or run it, or
+// when the fence itself contains a concrete high-risk source-to-sink chain.
+// This is deliberately a view, not a deletion: raw text is still available to
+// dedicated hidden/invisible-prompt and binary-perimeter checks.
+func analysisText(b FileBlob) string {
+	if !b.IsDoc {
+		return b.Lower
+	}
+	return markdownActiveView(b.Lower)
+}
+
+func markdownActiveView(c string) string {
+	lines := strings.Split(c, "\n")
+	var out strings.Builder
+	var fence strings.Builder
+	inFence := false
+	heading := ""
+	fenceHeading := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			heading = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if !inFence {
+				inFence = true
+				fence.Reset()
+				fenceHeading = heading
+				continue
+			}
+			body := fence.String()
+			if activeMarkdownHeading(fenceHeading) || concreteRiskFence(body) {
+				out.WriteString(body)
+				out.WriteByte('\n')
+			}
+			inFence = false
+			continue
+		}
+		if inFence {
+			fence.WriteString(line)
+			fence.WriteByte('\n')
+			continue
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	if inFence {
+		body := fence.String()
+		if activeMarkdownHeading(fenceHeading) || concreteRiskFence(body) {
+			out.WriteString(body)
+		}
+	}
+	return out.String()
+}
+
+func activeMarkdownHeading(heading string) bool {
+	h := strings.ToLower(heading)
+	if hasAny(h, []string{"example", "sample", "test", "fixture", "reference", "template", "pattern", "prevention", "troubleshoot", "best practice", "anti-pattern", "architecture", "implementation"}) {
+		return false
+	}
+	return hasAny(h, []string{"prerequisite", "dependency", "dependencies", "install", "setup", "quick start", "quickstart", "health check", "system check", "preflight", "connectivity", "authentication", "authorization", "bootstrap", "required", "requirement", "run", "execution", "usage", "instructions"})
+}
+
+func concreteRiskFence(c string) bool {
+	download := hasAny(c, []string{"curl ", "wget ", "invoke-webrequest", "requests.get", "urlopen(", "fetch("})
+	execute := hasAny(c, []string{"| bash", "| sh", "| sudo bash", "| sudo sh", "bash -c", "sh -c", "powershell", "chmod +x", "subprocess", "os.system(", "exec(", "eval(", "base64 -d", "base64 --decode"})
+	credential := hasAny(c, []string{"id_rsa", "id_ed25519", "~/.ssh", ".ssh/", ".aws/credentials", ".config/gh", ".npmrc", ".pypirc", ".env", "api_key", "access_token", "refresh_token", "cookie", "private key", "seed phrase", "credential"})
+	outbound := hasAny(c, []string{"requests.post", "curl -d", " -d ", " --data", "wget --post-data", "wget -q -o /dev/null --post-data", "--post-file", "authorization: bearer", "-h \"authorization", "webhook", "upload", "sendbeacon", "fetch(", "axios.post", "scp ", "sftp "})
+	return (download && execute) || (credential && outbound) || (hasAny(c, []string{"base64 -d", "base64 --decode", "frombase64string"}) && execute)
 }
 
 func isV31PrimaryEvidence(ev string) bool {
 	l := strings.ToLower(ev)
-	return hasAny(l, []string{"remote skill instruction execution", "agent memory persistence", "claude/cursor config-file hijack", "workspace spyware behavior", "mcp configuration launches", "hidden prompt payload", "clickfix-style social engineering", "browser extension credential bridge", "cloud metadata or localhost pivot", "prototype pollution or config injection", "invisible instruction smuggling", "hot-reload remote module", "scanner result tampering", "agent instruction credential exfiltration", "agent identity persistence", "websocket command channel", "local agent control hijack", "unsafe deserialization payload", "credential trap with outbound sink", "mcp/tool metadata prompt injection", "dependency confusion or mutable installer path", "known dependency-confusion or typosquat", "repository workflow/config executes", "bundled local binary", "startup or scheduled persistence", "cross-platform port appears", "agent instruction data exfiltration", "brand impersonation metadata", "project auto-run configuration hijack", "docker/build recipe pulls", "escaped payload evasion"})
+	return hasAny(l, []string{"remote skill instruction execution", "downloaded script execution", "agent memory persistence", "claude/cursor config-file hijack", "workspace spyware behavior", "mcp configuration launches", "hidden prompt payload", "clickfix-style social engineering", "browser extension credential bridge", "cloud metadata or localhost pivot", "prototype pollution or config injection", "invisible instruction smuggling", "hot-reload remote module", "scanner result tampering", "agent instruction credential exfiltration", "agent identity persistence", "websocket command channel", "local agent control hijack", "unsafe deserialization payload", "credential trap with outbound sink", "mcp/tool metadata prompt injection", "dependency confusion or mutable installer path", "known dependency-confusion or typosquat", "repository workflow/config executes", "bundled local binary", "startup or scheduled persistence", "cross-platform port appears", "agent instruction data exfiltration", "brand impersonation metadata", "project auto-run configuration hijack", "docker/build recipe pulls", "escaped payload evasion"})
 }
 
 func shouldPromoteFromExplain(report SkillReport) bool {
@@ -1292,10 +1772,82 @@ func hiddenPromptPayload(c string, b FileBlob) bool {
 	if !(b.IsDoc || b.IsMeta || strings.EqualFold(filepath.Base(b.Rel), "skill.md") || strings.EqualFold(filepath.Base(b.Rel), "claude.md") || strings.EqualFold(filepath.Base(b.Rel), "agents.md") || strings.Contains(strings.ToLower(b.Rel), ".cursor")) {
 		return false
 	}
-	hidden := hasAny(c, []string{"ignore previous", "ignore all previous", "developer mode", "system message", "system prompt", "developer message", "hidden instruction", "do not disclose", "do not reveal", "policy override", "bypass safety", "security warnings are", "scanner", "audit", "reviewer", "<!--", "\u200b", "\u200c", "\u200d"})
-	payload := hasAny(c, []string{"curl ", "wget ", "bash -c", "sh -c", "powershell", "base64 -d", "base64 --decode", "http://", "https://", "read ~/.ssh", "read .env", "read all files", "read workspace", "read project", "source files", "project files", "workspace files", "id_rsa", "api key", "api_key", "token", "cookie", "send credentials", "send secrets", "upload secrets", "upload", "send to", "post to", "exfiltrate", "webhook.site", "discord.com/api/webhooks", "hooks.slack.com"})
-	active := hasAny(c, []string{"you must", "assistant must", "when invoked", "on every request", "before proceeding", "run", "execute", "install", "send", "upload", "read", "copy", "paste into terminal"})
+	// Ordinary Markdown/HTML comments are ubiquitous in documentation and code
+	// examples. Treat the comment marker as hidden only when the comment itself
+	// contains an override/evasion directive; zero-width controls remain direct
+	// hidden-channel indicators.
+	override := []string{"ignore previous", "ignore all previous", "disregard previous", "disregard all previous", "disregard prior", "forget previous", "forget prior", "override earlier", "system prompt", "developer message", "hidden instruction", "do not disclose", "bypass safety", "scan bypass", "disable scanner"}
+	hiddenComment := maliciousHTMLComment(c)
+	hiddenControl := hasAny(c, []string{"\u200b", "\u200c", "\u200d", "\ufeff", "\u202a", "\u202b", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "display:none", "visibility:hidden", "font-size:0", "opacity:0", "data:text/plain;base64", "data:text/html;base64", "hidden prompt", "zero-width", "unicode bidi"})
+	rel := strings.ToLower(filepath.ToSlash(b.Rel))
+	implicitPolicyChannel := strings.Contains(rel, ".cursor/rules/") && hasAny(c, override)
+	hidden := hiddenComment || implicitPolicyChannel || (hiddenControl && hasAny(c, append(override, "developer mode", "system message", "do not reveal", "policy override", "security warnings are false")))
+	payload := hasAny(c, []string{"curl ", "wget ", "bash -c", "sh -c", "powershell", "base64 -d", "base64 --decode", "http://", "https://", "read ~/.ssh", "read .env", "read all files", "read workspace", "read project", "source files", "project files", "workspace files", "id_rsa", "api key", "api_key", "token", "cookie", "credit card", "bank account", "social security", "passport", "private data", "personal data", "send credentials", "send secrets", "upload secrets", "upload", "send to", "post to", "share with", "provide me", "exfiltrate", "webhook.site", "discord.com/api/webhooks", "hooks.slack.com"})
+	active := hasAny(c, []string{"you must", "assistant must", "your task", "when invoked", "on every request", "before proceeding", "run", "execute", "install", "send", "share", "provide", "upload", "read", "copy", "paste into terminal"})
 	return hidden && payload && active
+}
+
+func maliciousHTMLComment(c string) bool {
+	rest := c
+	for {
+		start := strings.Index(rest, "<!--")
+		if start < 0 {
+			return false
+		}
+		rest = rest[start+4:]
+		end := strings.Index(rest, "-->")
+		comment := rest
+		if end >= 0 {
+			comment = rest[:end]
+			rest = rest[end+3:]
+		} else {
+			rest = ""
+		}
+		override := hasAny(comment, []string{"ignore previous", "ignore all previous", "disregard previous", "disregard all previous", "disregard prior", "forget previous", "forget prior", "override earlier", "system prompt", "developer message", "hidden instruction", "do not disclose", "do not reveal", "policy override", "bypass safety", "scan bypass", "disable scanner"})
+		action := hasAny(comment, []string{"curl ", "wget ", "bash -c", "sh -c", "powershell", "execute", "run command", "read ", "send ", "share ", "provide ", "upload", "exfiltrate", "credential", "token", "cookie", "credit card", "bank account", "passport", "personal data", "private data", "source files", "workspace files"})
+		if override && action {
+			return true
+		}
+		actor := hasAny(comment, []string{"the agent", "the assistant", "the model", "you must", "you should", "your response", "every response", "all responses"})
+		identity := hasAny(comment, []string{"assume the role", "act as", "operate as", "operate under", "respond as", "rather than responding as", "impersonate", "persona", "professional credentials", "identity", "delegated authority"})
+		imperative := hasAny(comment, []string{"shall", "must", "commence", "begin every", "start every", "from now on", "upon activation", "prioritize", "exclusively", "maintain continuous"})
+		if actor && identity && imperative {
+			return true
+		}
+		encodedHidden := hasAny(comment, []string{"u+200b", "u+200c", "u+200d", "u+202e", "zero-width", "unicode bidi", "right-to-left override"})
+		if encodedHidden && len(strings.TrimSpace(comment)) >= 120 {
+			return true
+		}
+		if end < 0 {
+			return false
+		}
+	}
+}
+
+func concealedOperationalExecution(c string, b FileBlob) bool {
+	if benignInstructionalContext(c) || !isSkillFacingMaterial(b) {
+		return false
+	}
+	conceal := hasAny(c, []string{"do not surface", "do not mention", "do not tell", "do not disclose", "without telling", "without informing", "without notifying", "silently run", "silently execute", "quietly run", "quietly execute", "not user-visible", "not visible to the user", "hide its execution", "hide the execution"})
+	execute := hasAny(c, []string{"run ", "execute ", "invoke ", "launch ", "pre-flight", "preflight", "bootstrap", "initialization command"})
+	target := hasAny(c, []string{"python ", "python3 ", "node ", "bash ", "sh ", "powershell", "cmd.exe", "./", ".py", ".js", ".sh", ".ps1", ".exe", "helper script", "installer helper"})
+	approval := hasAny(c, []string{"ask for approval", "ask for confirmation", "after approval", "after confirmation", "with user approval", "with the user's approval", "only if the user approves", "show the command first"})
+	return conceal && execute && target && !approval
+}
+
+func destructiveCleanupWithoutApproval(c string, b FileBlob) bool {
+	if benignInstructionalContext(c) || !isSkillFacingMaterial(b) {
+		return false
+	}
+	for _, block := range strings.Split(c, "\n\n") {
+		destructive := hasAny(block, []string{"rm -rf", "delete all", "delete the originals", "delete originals", "remove the originals", "remove originals", "purge all", "wipe all", "permanently delete", "erase all"})
+		automatic := hasAny(block, []string{"automatically", "then remove", "then delete", "afterward remove", "afterwards remove", "without asking", "without confirmation", "without approval", "reclaim disk space", "cleanup", "clean up"})
+		approval := hasAny(block, []string{"ask for approval", "ask for confirmation", "after approval", "after confirmation", "with user approval", "with the user's approval", "only approved", "only after the user", "confirm before"})
+		if destructive && automatic && !approval {
+			return true
+		}
+	}
+	return false
 }
 
 func reverseShellBackdoor(c string, b FileBlob) bool {
@@ -1389,10 +1941,11 @@ func invisibleInstructionSmuggling(c string, b FileBlob) bool {
 	if !(b.IsDoc || b.IsMeta || strings.EqualFold(filepath.Base(b.Rel), "skill.md") || strings.EqualFold(filepath.Base(b.Rel), "readme.md") || strings.EqualFold(filepath.Base(b.Rel), "claude.md") || strings.EqualFold(filepath.Base(b.Rel), "agents.md") || strings.Contains(strings.ToLower(b.Rel), ".cursor")) {
 		return false
 	}
-	hidden := hasAny(c, []string{"\u200b", "\u200c", "\u200d", "\ufeff", "\u202a", "\u202b", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "<!--", "display:none", "visibility:hidden", "font-size:0", "opacity:0", "color:white", "color: white", "data:text/plain;base64", "data:text/html;base64", "base64 prompt", "hidden prompt", "steganographic", "unicode bidi", "zero-width"})
-	override := hasAny(c, []string{"ignore previous", "ignore all previous", "developer message", "system prompt", "policy override", "bypass safety", "do not disclose", "do not reveal", "never reveal", "scanner", "reviewer", "audit", "security warnings"})
-	action := hasAny(c, []string{"curl ", "wget ", "bash -c", "sh -c", "powershell", "base64 -d", "read ~/.ssh", "read .env", "api_key", "token", "cookie", "send credentials", "send secrets", "upload secrets", "exfiltrate", "webhook", "execute", "run command"})
-	return hidden && override && action
+	commentDirective := maliciousHTMLComment(c)
+	hidden := hasAny(c, []string{"\u200b", "\u200c", "\u200d", "\ufeff", "\u202a", "\u202b", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "display:none", "visibility:hidden", "font-size:0", "opacity:0", "color:white", "color: white", "data:text/plain;base64", "data:text/html;base64", "base64 prompt", "hidden prompt", "steganographic", "unicode bidi", "zero-width"})
+	override := hasAny(c, []string{"ignore previous", "ignore all previous", "disregard previous", "disregard all previous", "disregard prior", "forget previous", "forget prior", "override earlier", "developer message", "system prompt", "policy override", "bypass safety", "do not disclose", "do not reveal", "never reveal", "scanner", "reviewer", "audit", "security warnings"})
+	action := hasAny(c, []string{"curl ", "wget ", "bash -c", "sh -c", "powershell", "base64 -d", "read ~/.ssh", "read .env", "api_key", "token", "cookie", "credit card", "bank account", "passport", "personal data", "send credentials", "send secrets", "upload secrets", "share with", "provide me", "exfiltrate", "webhook", "execute", "run command"})
+	return commentDirective || (hidden && override && action)
 }
 
 func hotReloadRemoteModule(c string, b FileBlob) bool {
@@ -1615,11 +2168,44 @@ func localBinaryExecutionLure(c string, b FileBlob) bool {
 		return false
 	}
 	lure := hasAny(c, []string{"before proceeding", "before using", "must run", "must execute", "required helper", "helper binary", "installer helper", "run the executable", "run ./", "execute ./", "launch ./", "open ./", "copy and run", "paste into terminal"})
-	binary := hasAny(c, []string{".exe", ".dmg", ".pkg", ".app", ".msi", ".scr", ".command", ".bin", ".run", ".elf", "helper.exe", "installer.exe", "updater.exe", "chmod +x ./", "./install", "./setup", "./helper", "./updater"})
+	binary := hasAny(c, []string{".exe", ".dmg", ".pkg", ".app", ".msi", ".scr", ".command", ".bin", ".run", ".elf", "helper.exe", "installer.exe", "updater.exe", "chmod +x ./", "chmod +x /tmp/", "chmod +x /var/tmp/", "/tmp/.helper", "/tmp/helper", "./install", "./setup", "./helper", "./updater"})
 	opacity := hasAny(c, []string{"notarized", "verified", "signed helper", "downloaded helper", "bundled helper", "precompiled", "no source", "do not inspect", "ignore warnings", "security warning", "gatekeeper", "smart screen", "smartscreen", "quarantine"})
 	opaqueBinary := hasAny(c, []string{".exe", ".dmg", ".pkg", ".app", ".msi", ".scr", "helper.exe", "installer.exe", "updater.exe"})
 	riskyContext := hasAny(c, []string{"credential", "token", "api_key", ".env", "wallet", "browser", "ssh", "network", "webhook", "curl ", "wget "})
 	return lure && binary && (opaqueBinary || opacity || riskyContext)
+}
+
+func markdownOpaqueBinaryDownload(c string, b FileBlob) bool {
+	if !isSkillFacingMaterial(b) {
+		return false
+	}
+	remote := hasAny(c, []string{"curl ", "wget ", "invoke-webrequest", "downloadfile(", "releases/download", "dist.example", "build.example"})
+	binary := hasAny(c, []string{".bin", ".exe", ".dmg", ".pkg", ".msi", ".app", "/usr/local/bin/", "~/.local/bin/", "~/.cache/", "/tmp/."})
+	makeExecutable := hasAny(c, []string{"chmod +x", "chmod 755", "install -m 755", "start-process", "./", " --daemon", "exec "})
+	integrity := hasAny(c, []string{"sha256", "sha512", "shasum", "checksum", "gpg --verify", "cosign verify", "minisign", "signature verification"})
+	return remote && binary && makeExecutable && !integrity
+}
+
+func rsaModularExecutionPayload(c string, b FileBlob) bool {
+	if !isSkillFacingMaterial(b) {
+		return false
+	}
+	modular := hasAny(c, []string{"chr(pow(", "chr (pow(", "pow(c,", "pow (c,", "modular arithmetic"})
+	reconstruct := hasAny(c, []string{"''.join", `"".join`, "join(chr", "join (chr"})
+	sink := hasAny(c, []string{"exec(", "eval(", "compile("})
+	return modular && reconstruct && sink
+}
+
+func bundledOpaqueBinaryExecution(c string, b FileBlob) bool {
+	if benignInstructionalContext(c) || !isSkillFacingMaterial(b) {
+		return false
+	}
+	binary := hasAny(c, []string{"*.bin", "*.so", "*.dylib", "*.dll", "plugins/", "native plugin", "bundled binary"})
+	makeExecutable := hasAny(c, []string{"chmod +x", "chmod 755", "install -m 755"})
+	launch := hasAny(c, []string{`"$plugin"`, "./$plugin", " --init", " --daemon", "exec ", "start-process"})
+	sensitiveContext := hasAny(c, []string{"$home", "user environment", "env-passthrough", "ssh_auth_sock", "credential", "token"})
+	provenance := hasAny(c, []string{"sha256", "sha512", "checksum", "signature", "cosign verify", "gpg --verify", "source code", "build from source"})
+	return binary && makeExecutable && launch && sensitiveContext && !provenance
 }
 
 func startupPersistencePayload(c string, b FileBlob) bool {
@@ -1753,6 +2339,10 @@ func microPIIOutboundChain(c string, b FileBlob) bool {
 	outbound := hasAny(c, []string{"webhook", "requests.post", "requests.put", "fetch(", "axios.post", "http.post", "upload", "send to http", "exfiltrate", "discord.com/api/webhooks", "hooks.slack.com"})
 	imperative := b.IsCode || hasAny(c, []string{"collect", "read", "upload", "send", "export", "scrape", "harvest", "extract"})
 	return pii && outbound && imperative
+}
+
+func privacyEvasionSignal(c string) bool {
+	return hasAny(c, []string{"without consent", "without permission", "without approval", "without asking", "do not disclose", "do not reveal", "do not tell", "silently", "secretly", "quietly", "hidden instruction", "bypass consent", "skip consent", "ignore privacy", "exfiltrate", "harvest"})
 }
 
 func microBrowserWalletStoreExfil(c string, b FileBlob) bool {
@@ -1951,6 +2541,11 @@ func buildEvidence(verdict, category string, findings []Finding, scores map[stri
 		if findings[i].Category != category && findings[j].Category == category {
 			return false
 		}
+		verifiedI := strings.Contains(strings.ToLower(findings[i].Reason), "verified-flow")
+		verifiedJ := strings.Contains(strings.ToLower(findings[j].Reason), "verified-flow")
+		if verifiedI != verifiedJ {
+			return verifiedI
+		}
 		if findings[i].Strong != findings[j].Strong {
 			return findings[i].Strong
 		}
@@ -2001,12 +2596,7 @@ func topScoreParts(scores map[string]float64, primary string, n int) []string {
 		}
 		arr = append(arr, kv{k, v})
 	}
-	sort.Slice(arr, func(i, j int) bool {
-		if arr[i].V != arr[j].V {
-			return arr[i].V > arr[j].V
-		}
-		return arr[i].K < arr[j].K
-	})
+	sort.Slice(arr, func(i, j int) bool { return arr[i].V > arr[j].V })
 	if len(arr) > n {
 		arr = arr[:n]
 	}
@@ -2051,6 +2641,90 @@ func totalStrong(m map[string]int) int {
 		t += v
 	}
 	return t
+}
+
+// capDocumentaryVerdict separates executable behavior from documentation-only
+// capability descriptions. Broad co-occurrence heuristics remain visible as
+// suspicious, while verified flows and explicit attack instructions can still
+// produce a malicious verdict from SKILL.md.
+func capDocumentaryVerdict(verdict, category string, findings []Finding, blobs []FileBlob) string {
+	if verdict != "malicious" {
+		return verdict
+	}
+	selected := make([]Finding, 0, 8)
+	for _, f := range findings {
+		if f.Category == category && f.Strong {
+			selected = append(selected, f)
+		}
+	}
+	if len(selected) == 0 {
+		if category == "ast10" || category == "ast04" || category == "ast06" || category == "ast08" {
+			return "suspicious"
+		}
+		return verdict
+	}
+	allDocs := true
+	for _, f := range selected {
+		if highConfidenceDocumentFinding(f) {
+			return verdict
+		}
+		b, ok := blobForFinding(f.File, blobs)
+		if !ok || !b.IsDoc {
+			allDocs = false
+		}
+	}
+	if !allDocs {
+		return verdict
+	}
+
+	switch category {
+	case "ast10":
+		for _, f := range selected {
+			if b, ok := blobForFinding(f.File, blobs); ok && concreteRiskFence(analysisText(b)) {
+				return verdict
+			}
+		}
+		return "suspicious"
+	case "ast04", "ast06":
+		return "suspicious"
+	case "ast08", "ast01":
+		for _, f := range selected {
+			if b, ok := blobForFinding(f.File, blobs); ok && concreteRiskFence(analysisText(b)) {
+				return verdict
+			}
+		}
+		return "suspicious"
+	default:
+		return verdict
+	}
+}
+
+func highConfidenceDocumentFinding(f Finding) bool {
+	r := strings.ToLower(f.Reason)
+	file := strings.ToLower(filepath.ToSlash(f.File))
+	if strings.Contains(r, "hidden prompt payload") && (strings.Contains(file, ".cursor/rules/") || strings.HasSuffix(file, "agents.md") || strings.HasSuffix(file, "claude.md")) {
+		return true
+	}
+	return hasAny(r, []string{
+		"verified-flow", "remote skill instruction execution", "downloaded script execution", "invisible instruction smuggling",
+		"reverse shell or backdoor", "clickfix-style", "inline base64-decoded shell",
+		"concealed operational execution", "irreversible cleanup directive",
+		"fake openclaw", "credential webhook", "credential exfiltration", "credential material with a concrete outbound", "data exfiltration",
+		"opaque binary", "platform-specific opaque binary", "bundled native binaries",
+		"hot-reload remote module", "unsafe deserialization payload", "crypto wallet exfiltration",
+		"rsa/modular-arithmetic payload",
+		"cloud instance metadata credential endpoint access", "kubernetes service-account token access",
+	})
+}
+
+func blobForFinding(file string, blobs []FileBlob) (FileBlob, bool) {
+	want := filepath.ToSlash(file)
+	for _, b := range blobs {
+		if filepath.ToSlash(b.Rel) == want {
+			return b, true
+		}
+	}
+	return FileBlob{}, false
 }
 
 func topCategory(scores map[string]float64) (string, float64) {
@@ -2121,12 +2795,6 @@ func manifestBroadCapability(c string) bool {
 }
 
 func manifestCapabilityEnabled(c, cap string) bool {
-	trimmed := strings.TrimSpace(c)
-	if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(trimmed)) {
-		_, enabled := structuredJSONCapability(trimmed, cap)
-		return enabled
-	}
-
 	disabled := []string{"\"" + cap + "\":false", "\"" + cap + "\": false", cap + ": false", cap + "=false", "'" + cap + "': false", "'" + cap + "':false"}
 	if hasAny(c, disabled) {
 		return false
@@ -2184,10 +2852,13 @@ func shouldSkipFile(rel string) bool {
 
 func isInterestingFile(rel string) bool {
 	n := strings.ToLower(rel)
+	if strings.HasSuffix(n, ".tf") {
+		return true
+	}
 	if isManifestPath(n) || isPackagePath(n) || isKnownTextConfigPath(n) {
 		return true
 	}
-	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg", ".tf"}
+	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg"}
 	for _, e := range exts {
 		if strings.HasSuffix(n, e) {
 			return true
@@ -2252,29 +2923,26 @@ func pathHasSkippedDir(rel string, skip func(string) bool) bool {
 }
 
 func readFileSampled(path string, size, limit int64) ([]byte, error) {
-	if limit <= 0 {
-		return nil, fmt.Errorf("invalid sample limit %d", limit)
-	}
-	file, err := os.Open(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer f.Close()
 	if size <= 0 || size <= limit {
-		return io.ReadAll(io.LimitReader(file, limit))
+		return io.ReadAll(io.LimitReader(f, limit))
 	}
 	headLimit := limit / 2
 	tailLimit := limit - headLimit
-	head, err := io.ReadAll(io.LimitReader(file, headLimit))
+	head, err := io.ReadAll(io.LimitReader(f, headLimit))
 	if err != nil {
 		return nil, err
 	}
-	if _, err := file.Seek(size-tailLimit, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("seek sampled tail: %w", err)
+	if _, err := f.Seek(size-tailLimit, io.SeekStart); err != nil {
+		return head, nil
 	}
-	tail, err := io.ReadAll(io.LimitReader(file, tailLimit))
+	tail, err := io.ReadAll(io.LimitReader(f, tailLimit))
 	if err != nil {
-		return nil, fmt.Errorf("read sampled tail: %w", err)
+		return head, nil
 	}
 	out := make([]byte, 0, len(head)+len(tail)+32)
 	out = append(out, head...)
@@ -2438,31 +3106,42 @@ func fail(prefix string, err error) {
 var _ io.Reader
 
 func analyzeSkillV26Explain(root string) SkillReport {
-	_, explain, status := collectFilesDualStatus(root)
-	return enforceScanCompleteness(analyzeSkillV26ExplainFromBlobs(explain), status)
+	return analyzeSkillV26ExplainFromBlobs(collectFilesV26(root))
 }
 
 func analyzeSkillV26ExplainFromBlobs(blobs []FileBlob) SkillReport {
-	findings := make([]Finding, 0, 64)
+	findings := make([]Finding, 0, 80)
 
 	for _, b := range blobs {
 		findings = append(findings, analyzeFileV26(b)...)
 	}
 	findings = append(findings, analyzeCrossFileV26(blobs)...)
+	findings = append(findings, analyzeBinaryPerimeter(blobs)...)
+	flowSummary := analyzeBehaviorIR(blobs)
+	findings = append(findings, flowSummary.Findings...)
 
 	scores := map[string]float64{}
 	strongByCat := map[string]int{}
 	for _, f := range findings {
 		w := applyBenignDampener(f, blobs)
+		flowFactor := behaviorIRWeightFactor(f, flowSummary)
+		w *= flowFactor
 		scores[f.Category] += w
-		if f.Strong {
+		if f.Strong && flowFactor >= 0.5 {
 			strongByCat[f.Category]++
 		}
 	}
 
 	category, maxScore := topCategory(scores)
 	category, maxScore = calibrateCategoryV26(category, maxScore, scores)
-	blended := blendedScore(category, scores)
+	category, maxScore = calibrateVerifiedFlowCategory(category, maxScore, scores, findings)
+	blended := maxScore
+	for cat, sc := range scores {
+		if cat == category {
+			continue
+		}
+		blended += minFloat(sc, 4.0) * 0.18
+	}
 	if category == "ast09" {
 		altCat, altScore := topCategoryExcept(scores, "ast09")
 		if altCat != "" && altScore >= 1.8 {
@@ -2471,27 +3150,92 @@ func analyzeSkillV26ExplainFromBlobs(blobs []FileBlob) SkillReport {
 		}
 	}
 	verdict := "benign"
-	if maxScore >= 4.65 || (maxScore >= 3.25 && strongByCat[category] >= 1) || blended >= 5.35 || totalStrong(strongByCat) >= 2 {
+	allStrong := totalStrong(strongByCat)
+	if maxScore >= 4.65 || (maxScore >= 3.25 && strongByCat[category] >= 1) || blended >= 5.35 || allStrong >= 2 {
 		verdict = "malicious"
 	} else if maxScore >= 1.75 || blended >= 2.35 {
 		verdict = "suspicious"
 	}
+	verdict = capDocumentaryVerdict(verdict, category, findings, blobs)
 	if verdict == "benign" {
 		category = "benign"
 	}
 	evidence := buildEvidence(verdict, category, findings, scores)
-	return SkillReport{Verdict: verdict, EngineCategory: category, EvidenceText: evidence, Findings: findings, CategoryScore: scores}
+	return SkillReport{
+		Verdict:          verdict,
+		EngineCategory:   category,
+		EvidenceText:     evidence,
+		Findings:         findings,
+		CategoryScore:    scores,
+		TriggerLayer:     "explain",
+		TriggerScore:     maxScore,
+		TriggerCondition: verdictCondition(verdict, maxScore, strongByCat[category], blended, allStrong),
+		TriggerFindings:  auditTriggerFindings(findings, category, 8),
+	}
 }
 
 // ---- v26 explainability-only feature extractor. It is intentionally not used for verdicts. ----
 
 func collectFilesV26(root string) []FileBlob {
-	_, explain, _ := collectFilesDualStatus(root)
-	return explain
+	var blobs []FileBlob
+	var total int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
+			return filepath.SkipAll
+		}
+		if err != nil || d == nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if shouldSkipDirV26(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() <= 0 || total >= maxTotalBytes || len(blobs) >= maxBlobsPerSkill {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if shouldSkipFile(rel) || !isInterestingFileV26(rel) {
+			return nil
+		}
+		data, err := readFileSampled(path, info.Size(), maxFileBytes)
+		if err != nil || len(data) == 0 {
+			return nil
+		}
+		lower, ok := decodeTextLower(data)
+		if !ok {
+			return nil
+		}
+		if total+int64(len(data)) > maxTotalBytes {
+			return nil
+		}
+		total += int64(len(data))
+		blobs = append(blobs, FileBlob{
+			Rel:    rel,
+			Lower:  lower,
+			IsDoc:  isDocPath(rel),
+			IsMeta: isManifestPath(rel),
+			IsCode: isCodePathV26(rel),
+			Size:   int64(len(data)),
+		})
+		return nil
+	})
+	sort.Slice(blobs, func(i, j int) bool { return blobs[i].Rel < blobs[j].Rel })
+	return blobs
 }
 
 func analyzeFileV26(b FileBlob) []Finding {
-	c := b.Lower
+	if b.IsBinary {
+		return []Finding{{"ast01", 2.8, b.Rel, "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion", false}}
+	}
+	c := analysisText(b)
 	rel := b.Rel
 	var f []Finding
 
@@ -2587,7 +3331,11 @@ func analyzeFileV26(b FileBlob) []Finding {
 	}
 
 	if isolationBoundarySignal(c, b) {
-		f = append(f, Finding{"ast06", 5.0, rel, "references container, host, namespace, mount, or privileged isolation boundary", true})
+		w, strong := 5.0, true
+		if b.IsDoc {
+			w, strong = 2.8, false
+		}
+		f = append(f, Finding{"ast06", w, rel, "references container, host, namespace, mount, or privileged isolation boundary", strong})
 	}
 	if isolationSecretBoundarySignal(c, b) {
 		f = append(f, Finding{"ast06", 5.1, rel, "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary", true})
@@ -2651,7 +3399,11 @@ func analyzeFileV26(b FileBlob) []Finding {
 		f = append(f, Finding{"ast01", 5.8, rel, "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data", true})
 	}
 	if localAgentControlHijack(c, b) {
-		f = append(f, Finding{"ast06", 5.6, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", true})
+		w, strong := 5.6, true
+		if b.IsDoc && !hasAny(c, []string{"websocket.send", "send({", "send(json", "/execute", "/command", "method: execute", `"method":"execute"`, `"method": "execute"`}) {
+			w, strong = 3.2, false
+		}
+		f = append(f, Finding{"ast06", w, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", strong})
 	}
 	if unsafeDeserializePayload(c, b) {
 		f = append(f, Finding{"ast05", 5.7, rel, "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads", true})
@@ -2977,10 +3729,13 @@ func shouldSkipDirV26(name string) bool {
 
 func isInterestingFileV26(rel string) bool {
 	n := strings.ToLower(rel)
+	if strings.HasSuffix(n, ".tf") {
+		return true
+	}
 	if isManifestPath(n) || isPackagePathV26(n) || isKnownTextConfigPath(n) {
 		return true
 	}
-	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".swift", ".scala", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg", ".tf"}
+	exts := []string{".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".rb", ".php", ".java", ".kt", ".rs", ".c", ".cpp", ".h", ".cs", ".lua", ".pl", ".swift", ".scala", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".env", ".html", ".htm", ".xml", ".svg", ".md", ".mdx", ".mdc", ".prompt", ".prompty", ".txt", ".service", ".timer", ".plist", ".desktop", ".reg"}
 	for _, e := range exts {
 		if strings.HasSuffix(n, e) {
 			return true
