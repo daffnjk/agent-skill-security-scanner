@@ -20,3 +20,7 @@ bash scripts/selftest.sh
 ```
 
 Pull requests should explain the risk being detected, expected category and verdict, false-positive controls, and any performance impact.
+
+## Contribution licensing
+
+By submitting a pull request, you agree that your contributions may be used under both GNU AGPLv3 and the project's commercial license.

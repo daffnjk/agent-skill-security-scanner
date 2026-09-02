@@ -9,7 +9,7 @@
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Offline](https://img.shields.io/badge/runtime-offline-1f883d)](Dockerfile)
-[![License](https://img.shields.io/badge/license-MIT-f0b429)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-663399)](LICENSE)
 
 [中文](README.md)
 
@@ -153,4 +153,8 @@ make verify
 
 ## License
 
-[MIT](LICENSE)
+The public version of this project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0-only)](LICENSE), including for personal and educational use. It may also be used in commercial or proprietary environments when the AGPL-3.0 terms are followed.
+
+**Commercial use**: If you wish to use this project in a commercial or proprietary environment without the open-source obligations of AGPL-3.0, **please contact me to obtain a separate commercial license.**
+
+**Contributions**: By submitting a pull request, you agree that your contributions may be used under both GNU AGPLv3 and the project's commercial license.

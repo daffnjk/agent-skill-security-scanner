@@ -9,7 +9,7 @@
 [![CI](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/daffnjk/agent-skill-security-scanner/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![Offline](https://img.shields.io/badge/runtime-offline-1f883d)](Dockerfile)
-[![License](https://img.shields.io/badge/license-MIT-f0b429)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-663399)](LICENSE)
 
 [English](README_EN.md)
 
@@ -151,6 +151,10 @@ make verify
 - [贡献指南](CONTRIBUTING.md)
 - [安全问题报告](SECURITY.md)
 
-## License
+## 许可证
 
-[MIT](LICENSE)
+本项目的公开版本依据 [GNU Affero General Public License v3.0（AGPL-3.0-only）](LICENSE) 授权，包括个人和教育用途。遵守 AGPL-3.0 条款时，也可用于商业或专有环境。
+
+**商业用途**：如果您希望在不承担 AGPL-3.0 开源义务的商业或专有环境中使用本项目，**请联系我以获得单独的商业许可证。**
+
+**贡献**：通过提交 Pull Request，您同意您的贡献可以在 GNU AGPLv3 和项目的商业许可证下使用。
