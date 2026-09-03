@@ -1,101 +1,308 @@
-# Design notes
+# Scanner design
 
-Version v35 keeps the v32-v34 targeted recall behavior, then improves Track B output compliance and specificity without adding external dependencies or changing the high-confidence promotion philosophy.
+This document describes the current `main` branch design (v41). Historical
+competition behavior is frozen on the
+[`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
+branch; version-to-version release details belong in [`CHANGELOG.md`](../CHANGELOG.md).
 
-## Rationale
+## Purpose and design goals
 
-The previous engine already had a strong v25/v31 verdict path and used a broader v26 extractor only to improve AST category explanation on non-benign rows. The main gap was that some high-signal behavior chains located in generated extension code, docs-as-instructions, or less common config formats could remain benign because the broader extractor was never allowed to promote a benign result.
+`skillscan` is an offline static analyzer for Agent Skills, MCP tools, IDE rules,
+and plugin packages. It treats every target package as untrusted data and reports
+reviewable evidence without installing, importing, or executing target content.
 
-The v32 design keeps the stable verdict path and adds a controlled promotion gate: v26 can promote a benign result only when the promoted category is backed by concrete strong findings and a minimum category score. Weak AST09 governance hints, broad cross-platform reuse hints, and ordinary metadata are not promoted.
+The design prioritizes:
 
-## Scoring flow
+- high recall for concrete malicious behavior chains;
+- bounded resource use on adversarial directory trees;
+- deterministic results for the same scanner build and input;
+- explicit scan-completeness reporting instead of fail-open `benign` results;
+- a stable, minimal result contract for downstream integrations; and
+- category-specific evidence that maps non-benign results to AST01-AST10.
 
-1. Collect bounded, text-like skill files from `/data/skills/{skill_id}/` with a one-pass dual-profile collector: conservative v25 view plus broader v26 view. Oversized text files are sampled from head and tail, and UTF-16 text is decoded before scanning.
-2. Extract per-file findings with AST category, weight, and evidence reason.
-3. Add cross-file correlations for manifest/code, package lifecycle, browser extension manifest+script pairs, remote dynamic loading, and localhost/metadata pivots.
-4. Apply benign dampening to weak doc/test/demo signals.
-5. Select deterministic root-cause AST category.
-6. If the stable path returns benign, evaluate the already-collected broader explain-only view and promote only high-confidence AST01/02/05/06/07 chains, with stricter thresholds for AST04/08/10.
-7. Emit stable ranking-mode JSONL using exactly `skill_id`, `verdict`, `engine_category`, and `evidence_text`.
+The scanner is a triage tool, not a proof of safety. A `benign` verdict means that
+the inspected content did not reach the configured risk thresholds; it does not
+guarantee that the package is safe.
 
-## v32/v33 targeted rules
+## Trust boundary and non-goals
 
-- AST01: ClickFix-style command paste lures, browser-extension credential bridges, wallet/credential exfiltration, reverse shell/backdoor chains.
-- AST02: package lifecycle, build/install/update hooks, dependency integrity disablement, MCP / config-file hijack chains.
-- AST03: broad permissions, with precise wildcard handling and explicit false-boolean handling so ordinary `network: false` / `filesystem: false` manifests are not over-flagged.
-- AST04: invisible instruction smuggling through zero-width/bidi/control text, HTML comments, CSS-hidden text, or encoded prompt payloads.
-- AST05: unsafe YAML/pickle-capable loaders plus prototype pollution or config injection chains that can influence execution-sensitive options.
-- AST06: cloud metadata, localhost admin, Docker/Kubernetes/Redis/etcd/Vault/Consul/Elasticsearch pivots and existing container boundary checks.
-- AST07: hot-reload remote plugin/config/manifest/module loading and update drift.
-- AST08: scanner/audit result tampering and stronger evasive encoded payload chains.
-- AST09: remains a weak modifier rather than a primary malicious verdict driver.
-- AST10: remains useful for reusable credential/session material, but is not used to broadly promote benign rows without strong evidence.
+The scanner binary and its rule set are trusted. The input directory, file names,
+file contents, manifests, documentation, generated code, and embedded URLs are
+untrusted.
 
-## Compliance
+The scanner does not:
 
-The image is offline and deterministic, has no third-party Go module dependency, writes `/output/results.jsonl`, uses a BusyBox runtime stage, and includes `USER 1000` in the Dockerfile. The detector does not call external services or use model weights.
+- execute target commands, lifecycle hooks, scripts, or binaries;
+- import target packages or resolve their dependencies;
+- follow target symlinks;
+- fetch target URLs or call external analysis services;
+- provide runtime isolation or sandboxing; or
+- fully interpret encrypted, deeply obfuscated, generated, or unsupported content.
 
+Unsupported ordinary files are outside the analyzed surface. A skipped symlink,
+opaque executable/archive, read failure, exhausted scan budget, or supported file
+that cannot be decoded makes the scan incomplete rather than silently safe.
 
-## v33/v34 robustness/performance hardening
+## Architecture
 
-- One filesystem pass creates both file profiles, reducing duplicate I/O without changing detection thresholds.
-- Oversized text files are capped at 1 MiB and, in v34, sampled from both head and tail so padded malicious files can expose leading or trailing indicators while memory remains bounded.
-- Per-skill total bytes and retained blob count are capped to avoid pathological packages causing timeout or OOM.
-- Output is written through a temp file plus rename, with a conservative fallback commit path to preserve a complete JSONL file if overwrite semantics are unusual.
-- The final Docker image uses BusyBox instead of Alpine, reducing image footprint while keeping allowed-base compatibility and non-root execution.
+```text
+input directory
+    |
+    v
+skill discovery
+    |
+    v
+bounded one-pass collection
+    |-- conservative/base profile
+    |-- broader/explain profile
+    `-- scan-completeness status
+    |
+    v
+candidate findings
+    |-- per-file rules
+    |-- cross-file correlations
+    |-- executable-binary perimeter checks
+    `-- bounded Source -> Transform -> Sink verification
+    |
+    v
+weighting and root-cause selection
+    |-- benign-context dampening
+    |-- verified-flow calibration
+    |-- category and blended scores
+    `-- document-only verdict cap
+    |
+    v
+controlled explain-profile promotion
+    |
+    v
+scan-completeness enforcement
+    |
+    +--> results.jsonl
+    +--> scan-metadata.jsonl
+    `--> analysis-metadata.jsonl
+```
 
-## v34 specificity and edge-format hardening
+The implementation still uses historical `v25` and `v26` names for the base and
+explain extractors. These are internal compatibility labels, not the current
+product version.
 
-- Explicit disabled capabilities such as `"filesystem": false` are not treated as broad authorization. Enabled/listed all-host, shell, exec, admin, root, host, or broad filesystem capabilities remain AST03 signals.
-- UTF-16LE/UTF-16BE text-like files are decoded before scanning, improving coverage for PowerShell-oriented material that otherwise resembles binary data.
-- HTML/HTM/XML/SVG/MDX and selected dot/config files are considered skill-facing text where appropriate, improving AST04 hidden instruction smuggling coverage.
-- Cross-file encoded-payload correlation no longer constructs a joined global string; it uses bounded boolean aggregation to preserve behavior with lower allocation overhead.
+## Input and skill discovery
 
+The first positional argument selects the input directory and the second selects
+the output directory. `SKILLS_DIR` and `OUTPUT_DIR` are fallbacks; the container
+defaults are `/data/skills` and `/output`.
 
-## v35 schema and specificity hardening
+Each visible first-level directory under the input root is treated as one Skill.
+If the root contains no visible child directory, the root itself is scanned as a
+single Skill. Skills and retained file paths are sorted before analysis so file
+system enumeration order cannot change the result.
 
-- The result schema now uses only the ranking evidence-strategy fields: `skill_id`, `verdict`, `engine_category`, and `evidence_text`. This reduces JSONL size and avoids carrying legacy compatibility fields in ranking output.
-- Manifest privilege parsing distinguishes explicit enabled dangerous privileges from benign key names or false booleans. `project_root`, `admin_mode:false`, `privileged:false`, and `network:true` with `write:false` are no longer promoted to AST03/AST06 by keyword alone.
-- Metadata-only browser extension cookie/all-URL declarations are treated as over-privileged AST03 suspicious findings rather than malicious AST10. If a script reads cookies/storage and sends them outbound, the AST01 malicious browser-credential bridge rule still fires.
+## Bounded collection
 
-## v36 F2 recall hardening
+A single filesystem walk builds two views:
 
-v36 is intentionally recall-oriented because Track B uses F2. The patch does not lower global malicious thresholds; instead it adds OWASP AST10-derived high-confidence chains that v35 could miss or misclassify:
+- the **base profile** contains the conservative, verdict-bearing surface;
+- the **explain profile** includes additional generated code, configuration, and
+  less common text formats that can supply context or pass a stricter promotion
+  gate.
 
-- AST04 metadata/runtime mismatch: safe, low-risk, `network:false`, `shell:false`, or clean-scan metadata is correlated with executable outbound, credential, command, decoded, or destructive behavior.
-- AST01 agent-facing credential exfiltration instructions: skill prose instructs the assistant/agent to read `.env`, SSH keys, cookies, wallet/browser data, or cloud/package-manager credentials and send/report them externally.
-- AST01 WebSocket C2: persistent remote WebSocket/control channels receive commands or send process/environment/credential data.
-- AST06 local agent-control hijack: localhost agent/MCP/debug/devtools WebSocket or JSON-RPC endpoints are used for unauthenticated tool or command invocation.
-- AST05 unsafe serialized payloads: direct YAML `!!python/object/apply` / Python pickle-style / node-serialize-style gadgets near command or network payloads are detected even when the vulnerable loader is not present in the same file.
-- AST04 MCP/tool-description prompt injection: tool descriptions and schemas that carry hidden policy overrides tied to credential access or command execution are categorized as insecure metadata.
-- AST02 dependency confusion / mutable installer paths: alternate registries, package runners, `@latest`/mutable refs, and install-time command execution are treated as supply-chain compromise signals.
+Security-sensitive manifests, package lifecycle files, CI and project
+configuration, and source code receive budget priority over ordinary documents.
+Current per-profile limits are:
 
-The patch also narrows a doc-only false-positive class by requiring generic cross-file AST01/AST10 credential signals to come from active material rather than benign security-training or demo prose.
+- 1 MiB retained from each text-like file;
+- 24 MiB retained text per Skill profile; and
+- 4,096 retained blobs per Skill profile.
 
+Files larger than 1 MiB are sampled from both head and tail. A successfully
+sampled text file is recorded but does not by itself make the scan incomplete.
+UTF-8-like text and UTF-16LE/UTF-16BE text are decoded before matching. Known
+executable paths receive bounded magic-byte perimeter inspection; opaque content
+is not treated as if its behavior had been analyzed.
 
-## v37 F2 edge-recall hardening
+## Detection layers
 
-v37 continues the v36 philosophy: do not lower global thresholds; add only high-signal, AST-specific chains that are likely to appear in hidden malicious skill packages. The added rules target gaps found by reviewing the OWASP Agentic Skills Top 10 material and by testing v36 on focused edge samples.
+### Candidate rules and correlations
 
-- AST02 exact typosquat/dependency-confusion metadata: known misspelled skill dependencies and self-described dependency-confusion markers are malicious supply-chain signals. Alternate private indexes without lock/provenance are only suspicious unless paired with stronger install-exec evidence.
-- AST02 CI/workflow execution: GitHub/GitLab/CircleCI/Buildkite/Jenkins-style config that downloads and executes remote script content is treated as an active supply-chain/config execution path.
-- AST01 opaque binary-helper lures: skill-facing instructions requiring users or agents to run bundled opaque binaries or installer helpers are treated as malicious when the wording forms an execution prerequisite.
-- AST01 startup persistence configs: plist, systemd, cron, desktop, timer, and related startup material that launches network/shell/download behavior is detected even when the file is configuration rather than ordinary source code.
-- AST10 cross-platform metadata loss: source/target manifest pairs that show platform porting together with dropped security metadata and broad target permissions are classified as cross-platform reuse risk.
+Per-file rules emit findings with an AST category, weight, file, evidence reason,
+and `strong` flag. Cross-file rules then correlate behavior that is split across
+manifests, code, lifecycle files, browser extensions, remote loaders, local
+control endpoints, and security metadata.
 
-These additions intentionally rely on compound conditions rather than single keywords to avoid regressing the v35/v36 specificity improvements.
+The rules cover the following primary categories:
 
-## v38 F2 + explainability hardening
+| Category | Primary risk represented by this scanner |
+| --- | --- |
+| AST01 | Malicious skill behavior, including credential exfiltration, command-and-control, persistence, and execution lures |
+| AST02 | Supply-chain compromise, lifecycle execution, dependency confusion, CI/build hooks, and project auto-run hijacking |
+| AST03 | Excessive authorization, broad host/filesystem access, or dangerous enabled capabilities |
+| AST04 | Insecure or deceptive metadata, hidden instructions, prompt injection, and trusted-brand impersonation |
+| AST05 | Unsafe deserialization, prototype pollution, and execution-sensitive config injection |
+| AST06 | Weak isolation, cloud/container boundary access, or local agent-control hijacking |
+| AST07 | Update drift, mutable remote plugins/configuration, and hot-loaded code |
+| AST08 | Insufficient scanning, audit tampering, payload evasion, or incomplete analysis |
+| AST09 | Governance weakness; normally a weak modifier rather than a primary malicious driver |
+| AST10 | Unsafe cross-platform reuse of credentials, sessions, identity, or security metadata |
 
-v38 keeps the v37 recall posture and adds only high-confidence, category-specific rules where v37 either missed a malicious chain or produced a less precise OWASP AST category.
+A result has one primary `engine_category`. Other category scores remain available
+as audit metadata and may appear as secondary evidence.
 
-New coverage includes:
+### Bounded behavior-flow verification
 
-- AST04 trusted-brand impersonation metadata when a skill claims an official/verified provider while carrying unverified/typosquat publisher signals and sensitive permissions.
-- AST04 MCP/tool/Cursor-style prompt injection that tells an agent to read workspace/source-code files and upload them externally.
-- AST02 project auto-run config hijacking through devcontainer, direnv, VS Code tasks, Husky/pre-commit, and related repository-open/build/commit hooks.
-- AST02 Docker/build recipes that fetch mutable remote entrypoints without integrity checks.
-- AST08 escaped payload evasion based on hex/unicode/url-encoded string reconstruction paired with eval/exec, remote loading, or credential exfiltration.
-- AST01 language coverage for Rust/non-Python secret exfiltration sinks, plus skill-facing `.mdc`, `.prompt`, and `.prompty` text handling.
+v41 adds a small relation layer after broad recall rules. It follows selected
+Source -> Transform -> Sink paths in executable files and security-sensitive
+configuration, including exact-artifact bridges across files. It is deliberately
+bounded and is not a general parser or whole-program taint engine.
 
-Evidence text now includes an explicit `OWASP ASTxx` prefix for non-benign findings. This does not change the ranking JSONL schema, but makes the natural-language evidence easier to map back to the reported `engine_category`.
+Verified flows can:
+
+- add a strong, category-specific finding;
+- let a specific AST02/05/06/07 root cause outrank generic AST01 co-occurrence;
+- distinguish safe deserialization from unsafe loader paths; and
+- dampen broad credential-plus-network heuristics when all observed use is a
+  narrow, provider-matched authentication flow.
+
+This layer supplements the existing rules. It cannot erase specific wallet,
+metadata-service, persistence, lifecycle, or policy-tampering evidence merely
+because a separate safe authentication flow exists.
+
+## Scoring and verdict selection
+
+For each profile, the scanner:
+
+1. collects per-file, cross-file, binary-perimeter, and verified-flow findings;
+2. reduces weak findings in documentation, examples, tests, fixtures, and known
+   safe-flow contexts;
+3. sums the remaining weights by AST category;
+4. applies category-specific calibration so a concrete root cause can outrank a
+   generic command or network sink;
+5. computes a blended score from the primary category plus 18% of every other
+   category score, capped at 4.0 per secondary category; and
+6. applies deterministic category tie-breaking and the document-only verdict cap.
+
+The current base-profile thresholds are implementation policy:
+
+- `malicious` when the primary score is at least 4.65, or at least 3.25 with a
+  strong finding in that category, or the blended score is at least 5.35, or at
+  least two strong findings survive weighting;
+- `suspicious` when the primary score is at least 1.75 or the blended score is at
+  least 2.35; and
+- `benign` otherwise.
+
+Strong findings from documentation can still be malicious when they are direct
+agent instructions or concrete attack chains. Broad or descriptive document-only
+signals are capped at `suspicious` for categories where prose commonly discusses
+risk without implementing it.
+
+Threshold changes are behavior changes. They require regression tests and
+benchmark comparison; they must not be presented as documentation-only edits.
+
+## Base and explain profile contract
+
+The base profile owns a non-benign verdict and its primary category, evidence,
+score, and trigger findings. Broader explain-only findings may add secondary
+context but cannot rewrite an already non-benign base result.
+
+If the base profile is benign, the explain profile may promote it only when the
+selected category has at least one strong finding and reaches the following
+minimum score:
+
+| Explain category | Promotion score |
+| --- | ---: |
+| AST01, AST02, AST05, AST06, AST07 | 5.0 |
+| AST08 | 6.0 |
+| AST04 | 6.2 |
+| AST10 | 7.5 |
+
+AST03 and AST09 do not promote a benign base result. Known benign examples and
+test fixtures are also excluded from explain-profile promotion.
+
+## Scan completeness and failure behavior
+
+Completeness is independent of the classification score. The scanner records
+visited, analyzed, skipped, sampled, unreadable, symlinked, opaque, and truncated
+input counts for each Skill.
+
+If a scan is incomplete:
+
+- an otherwise benign result becomes `suspicious / ast08`;
+- an existing non-benign result is preserved and prefixed with a completeness
+  warning;
+- an internal scanner panic is recovered as `suspicious / ast08`; and
+- the process exits with status 3 after writing available output.
+
+`SKILLSCAN_ALLOW_PARTIAL=1` suppresses exit status 3 for non-Action integrations,
+but it does not restore an incomplete Skill to `benign`. The GitHub Action always
+treats an incomplete scan as a gate failure.
+
+## Output contracts
+
+The scanner writes three JSONL files to the selected output directory:
+
+| File | Contract |
+| --- | --- |
+| `results.jsonl` | Stable integration output with exactly `skill_id`, `verdict`, `engine_category`, and `evidence_text` |
+| `scan-metadata.jsonl` | Completeness, resource accounting, skipped-input counts, and bounded error samples |
+| `analysis-metadata.jsonl` | Trigger layer, score, condition, rule IDs, category scores, and explain-only context |
+
+Separating operational and analytical metadata keeps the four-field ranking
+contract stable while retaining enough detail to audit false positives and missed
+behavior chains. Non-benign evidence starts with an explicit `OWASP ASTxx` prefix.
+
+Each output is first written to a same-directory temporary file and committed by
+rename where supported. A conservative fallback still writes a complete JSONL
+file on filesystems with unusual replacement semantics.
+
+Process exit codes are:
+
+- `0`: the scan completed;
+- `2`: startup, input, or output failure; and
+- `3`: at least one Skill scan was incomplete.
+
+Finding a `suspicious` or `malicious` Skill does not by itself change the CLI exit
+code. Policy gating belongs to the GitHub Action or another caller.
+
+## Determinism, deployment, and dependencies
+
+Determinism is provided by sorted Skill/file traversal, stable category priority,
+bounded evidence selection, and the absence of time-, randomness-, network-, or
+model-dependent decisions. For the same binary, input bytes, arguments, and
+environment policy, output is expected to be identical.
+
+The detector uses the Go standard library only. The runtime image is BusyBox,
+runs as `USER 1000`, and contains no package manager or model weights. The scanner
+does not need network access at runtime.
+
+## Validation and change policy
+
+Changes to collection, rules, scoring, category calibration, or completeness must
+include focused regression coverage. New high-confidence rules should have both a
+malicious case and a nearby benign counterexample. Provider-authentication,
+safe-deserialization, documentation-context, resource-bound, and deterministic
+ordering cases are specifically protected against regression.
+
+Public evaluations use frozen dataset revisions and report each dataset
+separately because their labels and samples may overlap. Dataset names, sample
+IDs, and benchmark-specific allowlists must not appear in detection rules. See
+[`benchmarks/v41`](../benchmarks/v41/README.md) for the current public evidence and
+[`SELFTEST.md`](../SELFTEST.md) for portable regression coverage.
+
+## Historical evolution
+
+- **v32:** introduced controlled promotion from the broader explain profile.
+- **v33-v34:** combined profile collection into one filesystem pass and added
+  bounded head/tail sampling, UTF-16 handling, and format-specific hardening.
+- **v35:** stabilized the four-field result schema and narrowed permission parsing.
+- **v36-v38:** added compound, recall-oriented rules for Agentic Skills Top 10
+  behaviors while retaining specificity guards; v38 is the frozen competition
+  submission.
+- **v39:** added bounded Source -> Transform -> Sink relation verification and
+  narrow safe-flow dampening.
+- **v40:** made the base verdict provenance explicit: explain-only findings cannot
+  rewrite an already non-benign result.
+- **v41:** integrated the relation layer with fail-closed collection, executable
+  perimeter inspection, analysis metadata, regression calibration, and the GitHub
+  pull-request gate.
+
+For release details and competition provenance, see [`CHANGELOG.md`](../CHANGELOG.md)
+and [`docs/competition.md`](competition.md).
