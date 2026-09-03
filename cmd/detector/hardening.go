@@ -184,7 +184,8 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if shouldSkipFile(rel) {
+		binaryCandidate := isExecutableBinaryPath(rel)
+		if shouldSkipFile(rel) && !binaryCandidate {
 			status.FilesSkipped++
 			status.SkippedUnsupported++
 			if isOpaqueExecutableOrArchive(rel) {
@@ -194,8 +195,8 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 			return nil
 		}
 
-		baseCandidate := !pathHasSkippedDir(rel, shouldSkipDir) && isInterestingFile(rel)
-		explainCandidate := !pathHasSkippedDir(rel, shouldSkipDirV26) && isInterestingFileV26(rel)
+		baseCandidate := !pathHasSkippedDir(rel, shouldSkipDir) && (isInterestingFile(rel) || binaryCandidate)
+		explainCandidate := !pathHasSkippedDir(rel, shouldSkipDirV26) && (isInterestingFileV26(rel) || binaryCandidate)
 		if !baseCandidate && !explainCandidate {
 			status.FilesSkipped++
 			status.SkippedUnsupported++
@@ -258,7 +259,13 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 			status.SampledFiles++
 		}
 
+		binaryCandidate := isExecutableBinaryPath(candidate.Rel)
 		lower, ok := decodeTextLower(data)
+		magic := ""
+		if binaryCandidate {
+			lower, ok = "", true
+			magic = binaryMagicLabel(data)
+		}
 		if !ok {
 			status.FilesSkipped++
 			status.SkippedUnsupported++
@@ -276,12 +283,14 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 				status.markTruncated(fmt.Sprintf("base profile text limit %d bytes reached", maxTotalBytes))
 			default:
 				baseBlobs = append(baseBlobs, FileBlob{
-					Rel:    candidate.Rel,
-					Lower:  lower,
-					IsDoc:  isDocPath(candidate.Rel),
-					IsMeta: isManifestPath(candidate.Rel),
-					IsCode: isCodePath(candidate.Rel),
-					Size:   dataLen,
+					Rel:      candidate.Rel,
+					Lower:    lower,
+					IsDoc:    isDocPath(candidate.Rel),
+					IsMeta:   isManifestPath(candidate.Rel),
+					IsCode:   isCodePath(candidate.Rel),
+					IsBinary: binaryCandidate,
+					Magic:    magic,
+					Size:     dataLen,
 				})
 				baseTotal += dataLen
 				appended = true
@@ -296,12 +305,14 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 				status.markTruncated(fmt.Sprintf("explain profile text limit %d bytes reached", maxTotalBytes))
 			default:
 				explainBlobs = append(explainBlobs, FileBlob{
-					Rel:    candidate.Rel,
-					Lower:  lower,
-					IsDoc:  isDocPath(candidate.Rel),
-					IsMeta: isManifestPath(candidate.Rel),
-					IsCode: isCodePathV26(candidate.Rel),
-					Size:   dataLen,
+					Rel:      candidate.Rel,
+					Lower:    lower,
+					IsDoc:    isDocPath(candidate.Rel),
+					IsMeta:   isManifestPath(candidate.Rel),
+					IsCode:   isCodePathV26(candidate.Rel),
+					IsBinary: binaryCandidate,
+					Magic:    magic,
+					Size:     dataLen,
 				})
 				explainTotal += dataLen
 				appended = true

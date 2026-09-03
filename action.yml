@@ -1,0 +1,85 @@
+name: Agent Skill Security Scanner
+description: Build v41 and scan complete Agent Skill directories without executing target content.
+
+inputs:
+  path:
+    description: Workspace-relative directory whose immediate children are Skills.
+    required: false
+    default: skills
+  output:
+    description: Workspace-relative output directory for JSONL reports.
+    required: false
+    default: .skillscan
+  fail_on:
+    description: "Gate policy: malicious, suspicious, or never."
+    required: false
+    default: malicious
+
+outputs:
+  malicious:
+    description: Number of malicious verdicts.
+    value: ${{ steps.gate.outputs.malicious }}
+  suspicious:
+    description: Number of suspicious verdicts.
+    value: ${{ steps.gate.outputs.suspicious }}
+  benign:
+    description: Number of benign verdicts.
+    value: ${{ steps.gate.outputs.benign }}
+  results:
+    description: Workspace-relative path to results.jsonl.
+    value: ${{ inputs.output }}/results.jsonl
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache: false
+
+    - name: Build trusted scanner source
+      shell: bash
+      env:
+        ACTION_SOURCE: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        cd "$ACTION_SOURCE"
+        GOCACHE="$RUNNER_TEMP/skillscan-go-cache" CGO_ENABLED=0 \
+          go build -trimpath -ldflags="-s -w -buildid=" \
+          -o "$RUNNER_TEMP/skillscan" ./cmd/detector
+
+    - name: Scan complete Skill directories
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        workspace="$(realpath -m "$GITHUB_WORKSPACE")"
+        scan_path="$(realpath -m "$workspace/$INPUT_PATH")"
+        output_path="$(realpath -m "$workspace/$INPUT_OUTPUT")"
+        case "$scan_path/" in "$workspace/"*) ;; *) echo "scan path escapes the workspace" >&2; exit 2 ;; esac
+        case "$output_path/" in "$workspace/"*) ;; *) echo "output path escapes the workspace" >&2; exit 2 ;; esac
+        mkdir -p "$output_path"
+        set +e
+        "$RUNNER_TEMP/skillscan" "$scan_path" "$output_path"
+        scan_status=$?
+        set -e
+        if [ "$scan_status" -ne 0 ]; then
+          echo "skillscan failed or produced an incomplete scan (exit $scan_status)" >&2
+          exit "$scan_status"
+        fi
+
+    - name: Apply repository gate policy
+      id: gate
+      shell: bash
+      env:
+        ACTION_SOURCE: ${{ github.action_path }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_FAIL_ON: ${{ inputs.fail_on }}
+      run: |
+        set -euo pipefail
+        python3 "$ACTION_SOURCE/scripts/github_action_gate.py" \
+          --results "$GITHUB_WORKSPACE/$INPUT_OUTPUT/results.jsonl" \
+          --fail-on "$INPUT_FAIL_ON"
