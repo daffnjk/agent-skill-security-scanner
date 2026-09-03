@@ -4,6 +4,8 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-03
+
 - Integrate the v41 Generalized Context Flow engine on top of the hardened public mainline, including bounded behavior-flow verification and context-aware Markdown, credential, update, plugin, and PII rules.
 - Preserve the stable four-field `results.jsonl` contract and move v41 trigger scores, rule IDs, and secondary explanations into `analysis-metadata.jsonl`.
 - Preserve fail-closed input handling and scan-completeness reporting while adding bounded executable-binary perimeter inspection.
