@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -22,43 +23,52 @@ var stableCategoryOrder = []string{
 	"ast06", "ast07", "ast08", "ast09", "ast10",
 }
 
-// ScanStatus describes whether all supported content was inspected. Oversized
-// text files that are successfully head/tail sampled are reported, but do not by
-// themselves make a scan incomplete. Read failures, skipped opaque payloads,
-// symlinks, and resource-budget exhaustion do.
+// ScanStatus separates collection, content, and bounded-analysis coverage.
+// Sampling and any analysis truncation are incomplete, never equivalent to full inspection.
 type ScanStatus struct {
-	Complete           bool
-	Truncated          bool
-	InternalError      string
-	FilesVisited       int
-	FilesAnalyzed      int
-	FilesSkipped       int
-	ReadErrors         int
-	SampledFiles       int
-	SkippedSymlinks    int
-	SkippedOpaque      int
-	SkippedUnsupported int
-	TruncateReason     string
-	ErrorSamples       []string
+	Coverage                       Coverage
+	EntriesVisited                 int
+	InputDigest                    string
+	ExternalDependencies           []ExternalInstructionDependency
+	UnreviewedExternalInstructions int
+	Complete                       bool
+	Truncated                      bool
+	InternalError                  string
+	FilesVisited                   int
+	FilesAnalyzed                  int
+	FilesSkipped                   int
+	ReadErrors                     int
+	SampledFiles                   int
+	SkippedSymlinks                int
+	SkippedOpaque                  int
+	SkippedUnsupported             int
+	TruncateReason                 string
+	ErrorSamples                   []string
 }
 
 // ScanMetadata is the audit-oriented companion record written beside the
 // competition-compatible four-field results.jsonl output.
 type ScanMetadata struct {
-	SkillID            string   `json:"skill_id"`
-	Complete           bool     `json:"complete"`
-	Truncated          bool     `json:"truncated"`
-	InternalError      string   `json:"internal_error,omitempty"`
-	FilesVisited       int      `json:"files_visited"`
-	FilesAnalyzed      int      `json:"files_analyzed"`
-	FilesSkipped       int      `json:"files_skipped"`
-	ReadErrors         int      `json:"read_errors"`
-	SampledFiles       int      `json:"sampled_files"`
-	SkippedSymlinks    int      `json:"skipped_symlinks"`
-	SkippedOpaque      int      `json:"skipped_opaque"`
-	SkippedUnsupported int      `json:"skipped_unsupported"`
-	TruncateReason     string   `json:"truncate_reason,omitempty"`
-	ErrorSamples       []string `json:"error_samples,omitempty"`
+	SchemaVersion                  int      `json:"schema_version"`
+	RunID                          string   `json:"run_id"`
+	Coverage                       Coverage `json:"coverage"`
+	EntriesVisited                 int      `json:"entries_visited"`
+	InputDigest                    string   `json:"input_digest,omitempty"`
+	UnreviewedExternalInstructions int      `json:"unreviewed_external_instructions"`
+	SkillID                        string   `json:"skill_id"`
+	Complete                       bool     `json:"complete"`
+	Truncated                      bool     `json:"truncated"`
+	InternalError                  string   `json:"internal_error,omitempty"`
+	FilesVisited                   int      `json:"files_visited"`
+	FilesAnalyzed                  int      `json:"files_analyzed"`
+	FilesSkipped                   int      `json:"files_skipped"`
+	ReadErrors                     int      `json:"read_errors"`
+	SampledFiles                   int      `json:"sampled_files"`
+	SkippedSymlinks                int      `json:"skipped_symlinks"`
+	SkippedOpaque                  int      `json:"skipped_opaque"`
+	SkippedUnsupported             int      `json:"skipped_unsupported"`
+	TruncateReason                 string   `json:"truncate_reason,omitempty"`
+	ErrorSamples                   []string `json:"error_samples,omitempty"`
 }
 
 type fileCandidate struct {
@@ -92,21 +102,27 @@ func normalizeLoopRuleDefinitions() {
 }
 
 func validateInputRoot(root string) error {
-	info, err := os.Stat(root)
+	info, err := os.Lstat(root)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", root)
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s must be a non-symlink directory", root)
 	}
-	if _, err := os.ReadDir(root); err != nil {
+	dir, err := os.Open(root)
+	if err != nil {
 		return err
 	}
-	return nil
+	defer dir.Close()
+	_, err = dir.ReadDir(1)
+	if err == io.EOF {
+		return nil
+	}
+	return err
 }
 
 func newScanStatus() ScanStatus {
-	return ScanStatus{Complete: true}
+	return ScanStatus{Complete: true, Coverage: fullCoverage()}
 }
 
 func (status *ScanStatus) addReadError(path string, err error) {
@@ -115,6 +131,7 @@ func (status *ScanStatus) addReadError(path string, err error) {
 	}
 	status.Complete = false
 	status.ReadErrors++
+	status.Coverage.CollectionComplete = false
 	if len(status.ErrorSamples) < maxScanErrorSamples {
 		status.ErrorSamples = append(status.ErrorSamples, fmt.Sprintf("%s: %v", sanitizePath(path), err))
 	}
@@ -123,6 +140,7 @@ func (status *ScanStatus) addReadError(path string, err error) {
 func (status *ScanStatus) markTruncated(reason string) {
 	status.Complete = false
 	status.Truncated = true
+	status.Coverage.CollectionComplete = false
 	if status.TruncateReason == "" {
 		status.TruncateReason = reason
 	}
@@ -137,9 +155,13 @@ func (status *ScanStatus) markIncomplete(reason string) {
 
 func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 	status := newScanStatus()
+	digest := sha256.New()
 	candidates := make([]fileCandidate, 0, 256)
 
-	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	walkErr := walkDirBounded(root, maxVisitedEntries, maxDirectoryDepth, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr == nil {
+			status.EntriesVisited++
+		}
 		if walkErr != nil {
 			status.addReadError(path, walkErr)
 			if path == root {
@@ -162,6 +184,7 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 		if entry.Type()&os.ModeSymlink != 0 {
 			status.FilesSkipped++
 			status.SkippedSymlinks++
+			status.Coverage.CollectionComplete = false
 			status.markIncomplete("one or more symlinks were not followed")
 			return nil
 		}
@@ -170,6 +193,12 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 		if err != nil {
 			status.FilesSkipped++
 			status.addReadError(path, err)
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			status.FilesSkipped++
+			status.Coverage.CollectionComplete = false
+			status.markIncomplete("special filesystem entry was not read")
 			return nil
 		}
 		if info.Size() <= 0 {
@@ -190,6 +219,7 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 			status.SkippedUnsupported++
 			if isOpaqueExecutableOrArchive(rel) {
 				status.SkippedOpaque++
+				status.Coverage.ContentComplete = false
 				status.markIncomplete("opaque executable or archive content was skipped")
 			}
 			return nil
@@ -216,8 +246,11 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 		})
 		return nil
 	})
-	if walkErr != nil && status.ReadErrors == 0 {
-		status.addReadError(root, walkErr)
+	if walkErr != nil {
+		if status.ReadErrors == 0 {
+			status.addReadError(root, walkErr)
+		}
+		status.markTruncated(walkErr.Error())
 	}
 
 	// Security-sensitive metadata, package lifecycle files, CI configuration, and
@@ -252,11 +285,14 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 		}
 		if len(data) == 0 {
 			status.FilesSkipped++
+			status.Coverage.ContentComplete = false
 			status.markIncomplete("a supported file produced no readable content")
 			continue
 		}
 		if candidate.Size > maxFileBytes {
 			status.SampledFiles++
+			status.Coverage.ContentComplete = false
+			status.markIncomplete("oversized content was head/tail sampled")
 		}
 
 		binaryCandidate := isExecutableBinaryPath(candidate.Rel)
@@ -269,9 +305,30 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 		if !ok {
 			status.FilesSkipped++
 			status.SkippedUnsupported++
+			status.Coverage.ContentComplete = false
 			status.markIncomplete("a text-like candidate decoded as binary or unsupported content")
 			continue
 		}
+		fmt.Fprintf(digest, "%d:%s:%d:%x\n", len(candidate.Rel), candidate.Rel, candidate.Size, sha256.Sum256(data))
+		deps := inventoryExternalInstructions(candidate.Rel, inventoryText(data))
+		if len(deps) >= 256 || len(status.ExternalDependencies)+len(deps) > 1024 {
+			status.Coverage.AnalysisComplete = false
+			status.markIncomplete("external dependency inventory limit reached")
+		}
+		if len(deps) > 1024-len(status.ExternalDependencies) {
+			deps = deps[:1024-len(status.ExternalDependencies)]
+		}
+		for i := range deps {
+			if candidate.Size > maxFileBytes {
+				deps[i].StartLine = 0
+				deps[i].PositionScope = "sampled-view"
+			}
+			if deps[i].Kind == "instruction-delegation" {
+				status.UnreviewedExternalInstructions++
+				status.markIncomplete("external instructions have not been inspected")
+			}
+		}
+		status.ExternalDependencies = append(status.ExternalDependencies, deps...)
 		dataLen := int64(len(data))
 		appended := false
 
@@ -291,6 +348,7 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 					IsBinary: binaryCandidate,
 					Magic:    magic,
 					Size:     dataLen,
+					Sampled:  candidate.Size > maxFileBytes,
 				})
 				baseTotal += dataLen
 				appended = true
@@ -313,6 +371,7 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 					IsBinary: binaryCandidate,
 					Magic:    magic,
 					Size:     dataLen,
+					Sampled:  candidate.Size > maxFileBytes,
 				})
 				explainTotal += dataLen
 				appended = true
@@ -327,10 +386,14 @@ func collectFilesDualStatus(root string) ([]FileBlob, []FileBlob, ScanStatus) {
 	}
 
 	if status.FilesAnalyzed == 0 {
+		status.Coverage.CollectionComplete = false
 		status.markIncomplete("no supported file content was analyzed")
 	}
 	sort.Slice(baseBlobs, func(i, j int) bool { return baseBlobs[i].Rel < baseBlobs[j].Rel })
 	sort.Slice(explainBlobs, func(i, j int) bool { return explainBlobs[i].Rel < explainBlobs[j].Rel })
+	status.InputDigest = fmt.Sprintf("sha256:%x", digest.Sum(nil))
+	allBlobs := append(append([]FileBlob{}, baseBlobs...), explainBlobs...)
+	recordAnalysisCoverage(allBlobs, &status)
 	return baseBlobs, explainBlobs, status
 }
 
@@ -380,6 +443,10 @@ func enforceScanCompleteness(report SkillReport, status ScanStatus) SkillReport 
 		if report.CategoryScore["ast08"] < 2.5 {
 			report.CategoryScore["ast08"] = 2.5
 		}
+		report.TriggerLayer = "completeness"
+		report.TriggerScore = 2.5
+		report.TriggerCondition = "incomplete_scan"
+		report.TriggerFindings = []FindingAudit{{RuleID: "SKILL-COMPLETENESS", Category: "ast08", Weight: 2.5, Reason: warning, IDStability: "explicit"}}
 		report.EvidenceText = truncateSentence("OWASP AST08 scanner completeness: "+warning+"; a benign verdict is not emitted for an incomplete scan.", 420)
 		return report
 	}
@@ -413,20 +480,25 @@ func scanStatusSummary(status ScanStatus) string {
 
 func newScanMetadata(skillID string, status ScanStatus) ScanMetadata {
 	return ScanMetadata{
-		SkillID:            skillID,
-		Complete:           status.Complete,
-		Truncated:          status.Truncated,
-		InternalError:      status.InternalError,
-		FilesVisited:       status.FilesVisited,
-		FilesAnalyzed:      status.FilesAnalyzed,
-		FilesSkipped:       status.FilesSkipped,
-		ReadErrors:         status.ReadErrors,
-		SampledFiles:       status.SampledFiles,
-		SkippedSymlinks:    status.SkippedSymlinks,
-		SkippedOpaque:      status.SkippedOpaque,
-		SkippedUnsupported: status.SkippedUnsupported,
-		TruncateReason:     status.TruncateReason,
-		ErrorSamples:       append([]string(nil), status.ErrorSamples...),
+		SchemaVersion:                  2,
+		Coverage:                       status.Coverage,
+		EntriesVisited:                 status.EntriesVisited,
+		InputDigest:                    status.InputDigest,
+		UnreviewedExternalInstructions: status.UnreviewedExternalInstructions,
+		SkillID:                        skillID,
+		Complete:                       status.Complete,
+		Truncated:                      status.Truncated,
+		InternalError:                  status.InternalError,
+		FilesVisited:                   status.FilesVisited,
+		FilesAnalyzed:                  status.FilesAnalyzed,
+		FilesSkipped:                   status.FilesSkipped,
+		ReadErrors:                     status.ReadErrors,
+		SampledFiles:                   status.SampledFiles,
+		SkippedSymlinks:                status.SkippedSymlinks,
+		SkippedOpaque:                  status.SkippedOpaque,
+		SkippedUnsupported:             status.SkippedUnsupported,
+		TruncateReason:                 status.TruncateReason,
+		ErrorSamples:                   append([]string(nil), status.ErrorSamples...),
 	}
 }
 
@@ -450,29 +522,7 @@ func countIncompleteScans(rows []ScanMetadata) int {
 }
 
 func writeScanMetadata(outputDir string, rows []ScanMetadata) error {
-	outPath := filepath.Join(outputDir, "scan-metadata.jsonl")
-	tmpPath := outPath + ".tmp"
-	out, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-	writer := bufio.NewWriter(out)
-	encoder := json.NewEncoder(writer)
-	encoder.SetEscapeHTML(false)
-	for _, row := range rows {
-		if err := encoder.Encode(row); err != nil {
-			_ = out.Close()
-			return err
-		}
-	}
-	if err := writer.Flush(); err != nil {
-		_ = out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return commitResults(tmpPath, outPath)
+	return writeJSONLinesAtomic(outputDir, "scan-metadata.jsonl", rows)
 }
 
 func blendedScore(primary string, scores map[string]float64) float64 {

@@ -1,3 +1,5 @@
+> **Current boundary contract:** [hardening.md](hardening.md) supersedes the v41 input-discovery, sampling, report-writing and gate behavior described below. Historical rule-category meanings remain unchanged.
+
 # Scanner design
 
 This document describes the current `main` branch design (v41). Historical

@@ -1,21 +1,19 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.23.x"
+          go-version: '1.27.1'
           cache: false
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
@@ -27,11 +25,11 @@ jobs:
           go tool cover -func=coverage.out | tail -n 1
       - name: Race tests
         run: go test -race ./...
+      - name: Build trusted CLI
+        run: go build -trimpath -o "$RUNNER_TEMP/skillscan" ./cmd/detector
+      - name: Python unit tests and real CLI/gate regression tests
+        run: SKILLSCAN_BIN="$RUNNER_TEMP/skillscan" PYTHONPATH=scripts python3 -m unittest discover -v -s scripts -p 'test_*.py'
       - name: Regression self-test
         run: bash scripts/selftest.sh
-      - name: GitHub Action gate tests
-        run: PYTHONPATH=scripts python3 -m unittest scripts/test_github_action_gate.py
-      - name: Build
-        run: go build -trimpath -o skillscan ./cmd/detector
       - name: Container build
-        run: docker build -t skillscan:ci .
+        run: docker build --build-arg VCS_REF="$GITHUB_SHA" -t skillscan:ci .

@@ -1,3 +1,5 @@
+> **安全更新（未发布）**：下一版本为 `v0.3.0-dev`，引擎标识为 `v41-hardening.1`。已发布版本 `v0.2.0` 与历史评测引擎 `v41` 不是同一编号。新的完整性、输入模式和门禁契约见 [安全边界与迁移说明](docs/hardening.md)。
+
 <div align="center">
 
 # Agent Skill Security Scanner
@@ -123,7 +125,7 @@ docker run --rm \
 
 ## GitHub Actions 门禁
 
-发布 v41 tag 后，可以在保存 Skills 的仓库中直接使用本项目提供的复合 Action：
+v0.2.0 发布后（v41 是引擎编号），可以在保存 Skills 的仓库中直接使用本项目提供的复合 Action：
 
 ```yaml
 name: Scan Agent Skills

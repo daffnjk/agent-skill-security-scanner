@@ -1,3 +1,5 @@
+> **Migration notice:** For unreleased hardening builds, use [hardening.md](hardening.md). Sampling/analysis truncation now fail closed; consumers must verify the report seal and complete metadata.
+
 # v41 integration design
 
 v41 combines two previously separate development lines:

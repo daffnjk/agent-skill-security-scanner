@@ -1,0 +1,15 @@
+{
+  "base_commit": "d1c7672ace0666e7fca4b7380a9d38d0286bd829",
+  "workflow_run_id": "33947432917",
+  "go_version": "go version go1.27.1 linux/amd64",
+  "tested_go_source_sha256": "160f7829c8f8baa24c40f93d14eff332f36c2fc5c668592a35a954e443196e41",
+  "passed": [
+    "go vet ./...",
+    "go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...",
+    "go test -count=1 -race ./...",
+    "bash scripts/selftest.sh",
+    "Python discovery including real CLI/gate tests",
+    "docker build"
+  ],
+  "public_benchmark_datasets_rerun": false
+}
