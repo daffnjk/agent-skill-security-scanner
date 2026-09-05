@@ -31,4 +31,7 @@ for name, content in files.items():
         raise SystemExit('Invalid bundle path')
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding='utf-8')
+# main.go's remaining json.* occurrences are detection strings, not Go selectors.
+p = Path('.maintenance/apply_hardening.py')
+p.write_text(p.read_text() + '\np=Path("cmd/detector/main.go")\np.write_text(p.read_text().replace(\'\\t"encoding/json"\\n\', ""))\n')
 print(f'Unpacked {len(files)} reviewed source and migration files')
