@@ -31,5 +31,69 @@ jobs:
         run: SKILLSCAN_BIN="$RUNNER_TEMP/skillscan" PYTHONPATH=scripts python3 -m unittest discover -v -s scripts -p 'test_*.py'
       - name: Regression self-test
         run: bash scripts/selftest.sh
+      - name: Verify Action build without Git metadata
+        run: |
+          snapshot="$(mktemp -d "$RUNNER_TEMP/skillscan-archive.XXXXXX")"
+          git archive HEAD | tar -x -C "$snapshot"
+          python3 - "$snapshot" <<'PY'
+          import os, subprocess, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          text = (root / 'action.yml').read_text()
+          step = text.split('    - name: Build trusted scanner source\n', 1)[1].split('\n    - name:', 1)[0]
+          block = step.split('      run: |\n', 1)[1]
+          script = '\n'.join(line[8:] for line in block.splitlines())
+          env = dict(os.environ, ACTION_SOURCE=str(root), GOENV='off', GOFLAGS='', GOWORK='off', GOTOOLCHAIN='local')
+          subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root, env=env, check=True)
+          PY
       - name: Container build
         run: docker build --build-arg VCS_REF="$GITHUB_SHA" -t skillscan:ci .
+  action-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        policy: [malicious, suspicious, never]
+    env:
+      SKILLSCAN_ALLOW_PARTIAL: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Create inert input fixtures
+        run: |
+          mkdir -p .ci-smoke/single/scripts .ci-smoke/collection/clean
+          printf '# Local notes\nSummarize the supplied text.\n' > .ci-smoke/single/SKILL.md
+          printf 'def run(text): return text\n' > .ci-smoke/single/scripts/helper.py
+          printf '# Local notes\n' > .ci-smoke/collection/clean/SKILL.md
+          ln -s clean .ci-smoke/collection/linked
+      - name: Complete single Skill passes
+        id: complete
+        uses: ./
+        with:
+          path: .ci-smoke/single
+          output: .ci-reports/complete
+          fail_on: ${{ matrix.policy }}
+      - name: Incomplete collection must fail despite inherited override
+        id: incomplete
+        continue-on-error: true
+        uses: ./
+        with:
+          path: .ci-smoke/collection
+          mode: collection
+          output: .ci-reports/incomplete
+          fail_on: ${{ matrix.policy }}
+      - name: Assert fail-closed outcome and retained metadata
+        if: always()
+        env:
+          COMPLETE_OUTCOME: ${{ steps.complete.outcome }}
+          INCOMPLETE_OUTCOME: ${{ steps.incomplete.outcome }}
+        run: |
+          test "$COMPLETE_OUTCOME" = success
+          test "$INCOMPLETE_OUTCOME" = failure
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads(line) for line in Path('.ci-reports/incomplete/scan-metadata.jsonl').read_text().splitlines()]
+          assert {row['skill_id'] for row in rows} == {'clean', 'linked'}
+          assert any(row['complete'] is False for row in rows)
+          PY

@@ -53,7 +53,8 @@ runs:
       run: |
         set -euo pipefail
         cd "$ACTION_SOURCE"
-        revision="$(git rev-parse HEAD)"
+        # Downloaded Actions may not contain .git; retain source-hash identity.
+        revision="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
         GOCACHE="$RUNNER_TEMP/skillscan-go-cache" CGO_ENABLED=0 \
           go build -trimpath -ldflags="-s -w -buildid= -X main.buildCommit=$revision" \
           -o "$RUNNER_TEMP/skillscan" ./cmd/detector
