@@ -1,3 +1,5 @@
+> **Regression tooling:** [compare_benchmarks.py](../scripts/compare_benchmarks.py) compares identical labeled populations under strict and screening policies and exposes newly introduced false positives/negatives. Published metrics below are historical, not results for the unreleased hardening build.
+
 # 版本化评测基准
 
 本目录保存不可变、可追溯的版本化指标快照，用于观察不同检测器版本在固定数据集与固定材料化口径下的表现。

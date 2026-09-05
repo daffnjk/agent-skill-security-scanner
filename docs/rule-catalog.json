@@ -1,0 +1,752 @@
+[
+  {
+    "rule_id": "SKILL-R0001",
+    "source": "cmd/detector/behavior_ir.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0002",
+    "source": "cmd/detector/behavior_ir.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0003",
+    "source": "cmd/detector/behavior_ir.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0004",
+    "source": "cmd/detector/behavior_ir.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0005",
+    "source": "cmd/detector/behavior_ir.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0006",
+    "source": "cmd/detector/behavior_ir.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0007",
+    "source": "cmd/detector/main.go",
+    "description": "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion"
+  },
+  {
+    "rule_id": "SKILL-R0008",
+    "source": "cmd/detector/main.go",
+    "description": "SKILL instructions require a fake OpenClaw/ClawHub prerequisite and point to known malware installer, paste, archive, or encoded payload indicators"
+  },
+  {
+    "rule_id": "SKILL-R0009",
+    "source": "cmd/detector/main.go",
+    "description": "markdown skill instructions combine a prerequisite-download lure with paste-site, pass-protected archive, encoded shell, or credential-exfiltration indicators"
+  },
+  {
+    "rule_id": "SKILL-R0010",
+    "source": "cmd/detector/main.go",
+    "description": "skill-facing markdown contains an inline base64-decoded shell payload pattern"
+  },
+  {
+    "rule_id": "SKILL-R0011",
+    "source": "cmd/detector/main.go",
+    "description": "skill-facing markdown contains credential material with a concrete outbound transfer command"
+  },
+  {
+    "rule_id": "SKILL-R0012",
+    "source": "cmd/detector/main.go",
+    "description": "downloaded script execution: skill-facing instructions download a script artifact and execute that same artifact without integrity verification"
+  },
+  {
+    "rule_id": "SKILL-R0013",
+    "source": "cmd/detector/main.go",
+    "description": "RSA/modular-arithmetic payload reconstructs character codes and passes the hidden result to exec/eval"
+  },
+  {
+    "rule_id": "SKILL-R0014",
+    "source": "cmd/detector/main.go",
+    "description": "remote skill instruction execution: a skill-facing file fetches remote markdown/config and sources or executes it, allowing behavior to drift after review"
+  },
+  {
+    "rule_id": "SKILL-R0015",
+    "source": "cmd/detector/main.go",
+    "description": "agent memory persistence: instructions attempt to write hidden backdoor policy into SOUL.md, MEMORY.md, CLAUDE.md, or similar persistent agent identity files"
+  },
+  {
+    "rule_id": "SKILL-R0016",
+    "source": "cmd/detector/main.go",
+    "description": "Claude/Cursor config-file hijack: repository settings or hooks can execute shell commands, override API endpoints, or exfiltrate agent credentials on project open"
+  },
+  {
+    "rule_id": "SKILL-R0017",
+    "source": "cmd/detector/main.go",
+    "description": "workspace spyware behavior: extension code monitors or enumerates workspace files, encodes content, and sends it through a hidden webview or remote channel"
+  },
+  {
+    "rule_id": "SKILL-R0018",
+    "source": "cmd/detector/main.go",
+    "description": "MCP configuration launches an unpinned or remote command path with shell/package-runner execution and credential or network exposure"
+  },
+  {
+    "rule_id": "SKILL-R0019",
+    "source": "cmd/detector/main.go",
+    "description": "hidden prompt payload: skill-facing instructions impersonate system/developer policy while directing command execution, credential access, or exfiltration"
+  },
+  {
+    "rule_id": "SKILL-R0020",
+    "source": "cmd/detector/main.go",
+    "description": "concealed operational execution: skill instructions require a script, shell, or helper command to run without user-visible disclosure or approval"
+  },
+  {
+    "rule_id": "SKILL-R0021",
+    "source": "cmd/detector/main.go",
+    "description": "irreversible cleanup directive: skill instructions automatically delete, purge, wipe, or remove original user files without approval in the same action block"
+  },
+  {
+    "rule_id": "SKILL-R0022",
+    "source": "cmd/detector/main.go",
+    "description": "reverse shell or backdoor payload: skill material contains netcat/dev-tcp/socat/powershell command-and-control execution patterns"
+  },
+  {
+    "rule_id": "SKILL-R0023",
+    "source": "cmd/detector/main.go",
+    "description": "conditional or delayed malicious payload: suspicious credential/network/command behavior is gated on time, host, platform, CI, sandbox, or delayed execution checks"
+  },
+  {
+    "rule_id": "SKILL-R0024",
+    "source": "cmd/detector/main.go",
+    "description": "crypto wallet exfiltration: wallet seed, keypair, browser-wallet, or keystore material is read near outbound network or command execution behavior"
+  },
+  {
+    "rule_id": "SKILL-R0025",
+    "source": "cmd/detector/main.go",
+    "description": "ClickFix-style social engineering: skill-facing instructions tell the user or agent to paste/run a terminal command that downloads, decodes, or executes a remote payload"
+  },
+  {
+    "rule_id": "SKILL-R0026",
+    "source": "cmd/detector/main.go",
+    "description": "browser extension credential bridge: extension permissions or scripts can read cookies/storage/tabs on all URLs and forward captured data to a remote channel"
+  },
+  {
+    "rule_id": "SKILL-R0027",
+    "source": "cmd/detector/main.go",
+    "description": "cloud metadata or localhost pivot: skill material reaches host-local, cloud metadata, Kubernetes, Docker, Redis, etcd, or admin endpoints across an isolation boundary"
+  },
+  {
+    "rule_id": "SKILL-R0028",
+    "source": "cmd/detector/main.go",
+    "description": "prototype pollution or config injection: untrusted JSON/TOML/YAML/config input can merge into object prototypes or execution-sensitive options"
+  },
+  {
+    "rule_id": "SKILL-R0029",
+    "source": "cmd/detector/main.go",
+    "description": "invisible instruction smuggling: skill-facing metadata hides policy-override or execution instructions in zero-width, bidi, HTML-comment, CSS-hidden, or encoded text"
+  },
+  {
+    "rule_id": "SKILL-R0030",
+    "source": "cmd/detector/main.go",
+    "description": "hot-reload remote module: remote plugin/config/manifest content is downloaded and dynamically imported, required, loaded, or evaluated at runtime"
+  },
+  {
+    "rule_id": "SKILL-R0031",
+    "source": "cmd/detector/main.go",
+    "description": "scanner result tampering: skill code manipulates scan/audit results or hides files while suspicious execution, credential, network, or decode behavior is present"
+  },
+  {
+    "rule_id": "SKILL-R0032",
+    "source": "cmd/detector/main.go",
+    "description": "agent instruction credential exfiltration: skill-facing instructions tell the agent to read credentials, SSH keys, wallet, browser, or environment data and send or report it externally"
+  },
+  {
+    "rule_id": "SKILL-R0033",
+    "source": "cmd/detector/main.go",
+    "description": "agent identity persistence: executable or skill-facing material writes policy, backdoor, or credential-access instructions into persistent agent identity files"
+  },
+  {
+    "rule_id": "SKILL-R0034",
+    "source": "cmd/detector/main.go",
+    "description": "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data"
+  },
+  {
+    "rule_id": "SKILL-R0035",
+    "source": "cmd/detector/main.go",
+    "description": "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary"
+  },
+  {
+    "rule_id": "SKILL-R0036",
+    "source": "cmd/detector/main.go",
+    "description": "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads"
+  },
+  {
+    "rule_id": "SKILL-R0037",
+    "source": "cmd/detector/main.go",
+    "description": "credential trap with outbound sink: hard-coded secret/token patterns or credential-harvest terms are paired with webhook, fetch, or upload behavior"
+  },
+  {
+    "rule_id": "SKILL-R0038",
+    "source": "cmd/detector/main.go",
+    "description": "MCP/tool metadata prompt injection: tool descriptions or schemas contain hidden policy-override instructions tied to credential, source-code exfiltration, or command execution"
+  },
+  {
+    "rule_id": "SKILL-R0039",
+    "source": "cmd/detector/main.go",
+    "description": "agent instruction data exfiltration: skill-facing instructions tell the agent to read workspace/source files and upload or report them to an external endpoint"
+  },
+  {
+    "rule_id": "SKILL-R0040",
+    "source": "cmd/detector/main.go",
+    "description": "brand impersonation metadata: skill claims a trusted provider while using unofficial publisher signals and sensitive permissions or credential context"
+  },
+  {
+    "rule_id": "SKILL-R0041",
+    "source": "cmd/detector/main.go",
+    "description": "project auto-run configuration hijack: repository config can execute remote or credential-exfiltrating commands when opened, built, or committed"
+  },
+  {
+    "rule_id": "SKILL-R0042",
+    "source": "cmd/detector/main.go",
+    "description": "Docker/build recipe pulls remote mutable content into an executable entrypoint or startup command without integrity pinning"
+  },
+  {
+    "rule_id": "SKILL-R0043",
+    "source": "cmd/detector/main.go",
+    "description": "escaped payload evasion: encoded hex/unicode/url string reconstruction is paired with eval/exec, remote loading, or credential exfiltration behavior"
+  },
+  {
+    "rule_id": "SKILL-R0044",
+    "source": "cmd/detector/main.go",
+    "description": "dependency confusion or mutable installer path: package metadata uses alternate registries, latest/mutable refs, or package runners with install-time execution risk"
+  },
+  {
+    "rule_id": "SKILL-R0045",
+    "source": "cmd/detector/main.go",
+    "description": "known dependency-confusion or typosquat package pattern appears in skill package metadata"
+  },
+  {
+    "rule_id": "SKILL-R0046",
+    "source": "cmd/detector/main.go",
+    "description": "package metadata resolves private/internal dependency names through an alternate registry or index without an accompanying lock/provenance signal"
+  },
+  {
+    "rule_id": "SKILL-R0047",
+    "source": "cmd/detector/main.go",
+    "description": "repository workflow/config executes remote installer content during CI or project automation"
+  },
+  {
+    "rule_id": "SKILL-R0048",
+    "source": "cmd/detector/main.go",
+    "description": "skill-facing instructions require running a bundled local binary or installer helper before use, creating an opaque execution path"
+  },
+  {
+    "rule_id": "SKILL-R0049",
+    "source": "cmd/detector/main.go",
+    "description": "active skill instructions download a platform-specific opaque binary, mark it executable, and install or launch it without an integrity check"
+  },
+  {
+    "rule_id": "SKILL-R0050",
+    "source": "cmd/detector/main.go",
+    "description": "skill instructions discover bundled native binaries, make them executable, and launch them with user-environment access without provenance or integrity verification"
+  },
+  {
+    "rule_id": "SKILL-R0051",
+    "source": "cmd/detector/main.go",
+    "description": "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior"
+  },
+  {
+    "rule_id": "SKILL-R0052",
+    "source": "cmd/detector/main.go",
+    "description": "install lifecycle or build metadata downloads remote content and executes it"
+  },
+  {
+    "rule_id": "SKILL-R0053",
+    "source": "cmd/detector/main.go",
+    "description": "YAML content contains object/apply/function tags capable of constructing executable objects"
+  },
+  {
+    "rule_id": "SKILL-R0054",
+    "source": "cmd/detector/main.go",
+    "description": "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure"
+  },
+  {
+    "rule_id": "SKILL-R0055",
+    "source": "cmd/detector/main.go",
+    "description": "agent or MCP configuration hook can launch shell/package-runner commands or rewrite model/network execution paths"
+  },
+  {
+    "rule_id": "SKILL-R0056",
+    "source": "cmd/detector/main.go",
+    "description": "remote plugin or tool registration is allowed without approval/authentication and can load external code"
+  },
+  {
+    "rule_id": "SKILL-R0057",
+    "source": "cmd/detector/main.go",
+    "description": "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime"
+  },
+  {
+    "rule_id": "SKILL-R0058",
+    "source": "cmd/detector/main.go",
+    "description": "unsafe deserialization primitive is near file, network, stdin, argument, upload, or decoded input source"
+  },
+  {
+    "rule_id": "SKILL-R0059",
+    "source": "cmd/detector/main.go",
+    "description": "command/eval sink is near user, environment, decoded, network, or manifest-controlled input"
+  },
+  {
+    "rule_id": "SKILL-R0060",
+    "source": "cmd/detector/main.go",
+    "description": "PII or personal-data collection is paired with webhook/upload/POST outbound transfer"
+  },
+  {
+    "rule_id": "SKILL-R0061",
+    "source": "cmd/detector/main.go",
+    "description": "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior"
+  },
+  {
+    "rule_id": "SKILL-R0062",
+    "source": "cmd/detector/main.go",
+    "description": "MCP/agent server configuration launches remote or latest package-runner code with approval bypass or auto-approval"
+  },
+  {
+    "rule_id": "SKILL-R0063",
+    "source": "cmd/detector/main.go",
+    "description": "VS Code/IDE extension workspace file access is paired with outbound upload or telemetry sink"
+  },
+  {
+    "rule_id": "SKILL-R0064",
+    "source": "cmd/detector/main.go",
+    "description": "browser extension broad host/cookie/storage permissions are paired with outbound exfiltration behavior"
+  },
+  {
+    "rule_id": "SKILL-R0065",
+    "source": "cmd/detector/main.go",
+    "description": "cloud instance metadata credential endpoint access is paired with outbound exfiltration behavior"
+  },
+  {
+    "rule_id": "SKILL-R0066",
+    "source": "cmd/detector/main.go",
+    "description": "Kubernetes service-account token access is paired with outbound upload or cluster pivot behavior"
+  },
+  {
+    "rule_id": "SKILL-R0067",
+    "source": "cmd/detector/main.go",
+    "description": "shell history, netrc, npm, pypirc, git-credentials, or SSH config material is paired with outbound upload behavior"
+  },
+  {
+    "rule_id": "SKILL-R0068",
+    "source": "cmd/detector/main.go",
+    "description": "CI workflow requests identity/secrets tokens and sends them to an external HTTP sink"
+  },
+  {
+    "rule_id": "SKILL-R0069",
+    "source": "cmd/detector/main.go",
+    "description": "Docker/build recipe downloads remote mutable content and executes it during build or entrypoint"
+  },
+  {
+    "rule_id": "SKILL-R0070",
+    "source": "cmd/detector/main.go",
+    "description": "skill-facing instructions describe scan-bypass or post-scan self-update behavior that fetches remote executable/instruction material"
+  },
+  {
+    "rule_id": "SKILL-R0071",
+    "source": "cmd/detector/main.go",
+    "description": "skill modifies agent policy or instruction files to disable guards while enabling command/network behavior"
+  },
+  {
+    "rule_id": "SKILL-R0072",
+    "source": "cmd/detector/main.go",
+    "description": "cross-platform port appears to drop or weaken security metadata such as risk tier, signatures, deny rules, allowlisted egress, or scoped permissions"
+  },
+  {
+    "rule_id": "SKILL-R0073",
+    "source": "cmd/detector/main.go",
+    "description": "combines command execution with credential, network, destructive, or decoded input signals"
+  },
+  {
+    "rule_id": "SKILL-R0074",
+    "source": "cmd/detector/main.go",
+    "description": "contains executable command/eval sink in code"
+  },
+  {
+    "rule_id": "SKILL-R0075",
+    "source": "cmd/detector/main.go",
+    "description": "reads secret-like data and sends it through a network sink"
+  },
+  {
+    "rule_id": "SKILL-R0076",
+    "source": "cmd/detector/main.go",
+    "description": "contains destructive file operation indicators"
+  },
+  {
+    "rule_id": "SKILL-R0077",
+    "source": "cmd/detector/main.go",
+    "description": "accesses credential-like material near file, network, or execution logic"
+  },
+  {
+    "rule_id": "SKILL-R0078",
+    "source": "cmd/detector/main.go",
+    "description": "network path is paired with encoded or reconstructed content handling"
+  },
+  {
+    "rule_id": "SKILL-R0079",
+    "source": "cmd/detector/main.go",
+    "description": "user, metadata, or config-controlled value can reach command/eval execution"
+  },
+  {
+    "rule_id": "SKILL-R0080",
+    "source": "cmd/detector/main.go",
+    "description": "package lifecycle metadata contains command, network, or decoded execution behavior"
+  },
+  {
+    "rule_id": "SKILL-R0081",
+    "source": "cmd/detector/main.go",
+    "description": "installer/update path can fetch or execute dependency content"
+  },
+  {
+    "rule_id": "SKILL-R0082",
+    "source": "cmd/detector/main.go",
+    "description": "disables dependency integrity or transport verification"
+  },
+  {
+    "rule_id": "SKILL-R0083",
+    "source": "cmd/detector/main.go",
+    "description": "package lifecycle or installer script reaches network, command, or decoded execution behavior"
+  },
+  {
+    "rule_id": "SKILL-R0084",
+    "source": "cmd/detector/main.go",
+    "description": "python build/install metadata can run dynamic dependency or build-time code"
+  },
+  {
+    "rule_id": "SKILL-R0085",
+    "source": "cmd/detector/main.go",
+    "description": "manifest declares broad filesystem, network, shell, host, or wildcard capability"
+  },
+  {
+    "rule_id": "SKILL-R0086",
+    "source": "cmd/detector/main.go",
+    "description": "metadata includes hidden prompt, policy override, or scanner-bypass instruction"
+  },
+  {
+    "rule_id": "SKILL-R0087",
+    "source": "cmd/detector/main.go",
+    "description": "metadata references cross-scope policy or effective metadata handling"
+  },
+  {
+    "rule_id": "SKILL-R0088",
+    "source": "cmd/detector/main.go",
+    "description": "code contains hidden instruction or policy-override text used by the skill"
+  },
+  {
+    "rule_id": "SKILL-R0089",
+    "source": "cmd/detector/main.go",
+    "description": "uses unsafe deserialization primitive"
+  },
+  {
+    "rule_id": "SKILL-R0090",
+    "source": "cmd/detector/main.go",
+    "description": "uses yaml.load without SafeLoader/safe_load"
+  },
+  {
+    "rule_id": "SKILL-R0091",
+    "source": "cmd/detector/main.go",
+    "description": "uses an unsafe YAML loader configuration"
+  },
+  {
+    "rule_id": "SKILL-R0092",
+    "source": "cmd/detector/main.go",
+    "description": "loads pickle-capable serialized data from user, file, or remote-influenced input"
+  },
+  {
+    "rule_id": "SKILL-R0093",
+    "source": "cmd/detector/main.go",
+    "description": "deserialization path is near command/eval execution sink"
+  },
+  {
+    "rule_id": "SKILL-R0094",
+    "source": "cmd/detector/main.go",
+    "description": "references container, host, namespace, mount, or privileged isolation boundary"
+  },
+  {
+    "rule_id": "SKILL-R0095",
+    "source": "cmd/detector/main.go",
+    "description": "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary"
+  },
+  {
+    "rule_id": "SKILL-R0096",
+    "source": "cmd/detector/main.go",
+    "description": "archive extraction logic may allow path traversal across the intended skill boundary"
+  },
+  {
+    "rule_id": "SKILL-R0097",
+    "source": "cmd/detector/main.go",
+    "description": "uses path traversal pattern near file access logic"
+  },
+  {
+    "rule_id": "SKILL-R0098",
+    "source": "cmd/detector/main.go",
+    "description": "implements remote update/configuration or version-drift behavior"
+  },
+  {
+    "rule_id": "SKILL-R0099",
+    "source": "cmd/detector/main.go",
+    "description": "network-fetched content can rewrite skill/plugin/config material"
+  },
+  {
+    "rule_id": "SKILL-R0100",
+    "source": "cmd/detector/main.go",
+    "description": "uses remote policy, registry, feature flag, or release manifest that can drift skill behavior"
+  },
+  {
+    "rule_id": "SKILL-R0101",
+    "source": "cmd/detector/main.go",
+    "description": "decoded or reconstructed content reaches command/eval execution"
+  },
+  {
+    "rule_id": "SKILL-R0102",
+    "source": "cmd/detector/main.go",
+    "description": "contains anti-analysis, timing, or environment-gated behavior near suspicious sinks"
+  },
+  {
+    "rule_id": "SKILL-R0103",
+    "source": "cmd/detector/main.go",
+    "description": "governance, audit, policy, or guardrail enforcement appears disabled or bypassed"
+  },
+  {
+    "rule_id": "SKILL-R0104",
+    "source": "cmd/detector/main.go",
+    "description": "references reusable cross-platform credentials, cookies, tokens, or cloud/session material"
+  },
+  {
+    "rule_id": "SKILL-R0105",
+    "source": "cmd/detector/main.go",
+    "description": "targets common cross-platform credential/session files"
+  },
+  {
+    "rule_id": "SKILL-R0106",
+    "source": "cmd/detector/main.go",
+    "description": "targets cloud, package-manager, browser, OIDC, or keychain credential material reusable across platforms"
+  },
+  {
+    "rule_id": "SKILL-R0107",
+    "source": "cmd/detector/main.go",
+    "description": "broad declared capability is paired with executable command/eval behavior"
+  },
+  {
+    "rule_id": "SKILL-R0108",
+    "source": "cmd/detector/main.go",
+    "description": "package lifecycle script is paired with installer network fetch and command execution"
+  },
+  {
+    "rule_id": "SKILL-R0109",
+    "source": "cmd/detector/main.go",
+    "description": "python build metadata is paired with network fetch and command execution code"
+  },
+  {
+    "rule_id": "SKILL-R0110",
+    "source": "cmd/detector/main.go",
+    "description": "network/update behavior is paired with command/eval execution across files"
+  },
+  {
+    "rule_id": "SKILL-R0111",
+    "source": "cmd/detector/main.go",
+    "description": "network behavior is paired with secret/token access across files"
+  },
+  {
+    "rule_id": "SKILL-R0112",
+    "source": "cmd/detector/main.go",
+    "description": "encoded payload handling is paired with eval/exec behavior"
+  },
+  {
+    "rule_id": "SKILL-R0113",
+    "source": "cmd/detector/main.go",
+    "description": "browser extension broad host/cookie/storage permissions are paired with script-level outbound exfiltration behavior"
+  },
+  {
+    "rule_id": "SKILL-R0114",
+    "source": "cmd/detector/main.go",
+    "description": "remote plugin/config/update material is paired with dynamic import/require/eval loading across skill files"
+  },
+  {
+    "rule_id": "SKILL-R0115",
+    "source": "cmd/detector/main.go",
+    "description": "cloud metadata or host-local admin endpoint access is paired with network, credential, or execution behavior"
+  },
+  {
+    "rule_id": "SKILL-R0116",
+    "source": "cmd/detector/main.go",
+    "description": "ported skill material loses or weakens security metadata such as signatures, content hashes, deny-write rules, default-deny egress, or scoped permissions"
+  },
+  {
+    "rule_id": "SKILL-R0117",
+    "source": "cmd/detector/main.go",
+    "description": "metadata declares network access disabled while executable skill material performs outbound network behavior tied to secrets, command execution, or destructive activity"
+  },
+  {
+    "rule_id": "SKILL-R0118",
+    "source": "cmd/detector/main.go",
+    "description": "metadata declares shell or command execution disabled while executable material reaches command/eval sinks with risky context"
+  },
+  {
+    "rule_id": "SKILL-R0119",
+    "source": "cmd/detector/main.go",
+    "description": "metadata claims low/safe risk while code shows credential, outbound execution, or destructive behavior inconsistent with that risk tier"
+  },
+  {
+    "rule_id": "SKILL-R0120",
+    "source": "cmd/detector/main.go",
+    "description": "metadata advertises a clean/passed scan while skill code contains credential, outbound, decoded, or command-execution behavior"
+  },
+  {
+    "rule_id": "SKILL-R0121",
+    "source": "cmd/detector/main.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0122",
+    "source": "cmd/detector/main.go",
+    "description": "install lifecycle metadata is paired with remote download and execution across skill files"
+  },
+  {
+    "rule_id": "SKILL-R0123",
+    "source": "cmd/detector/main.go",
+    "description": "concrete credential or sensitive-store access is paired with an outbound upload/webhook sink across skill files"
+  },
+  {
+    "rule_id": "SKILL-R0124",
+    "source": "cmd/detector/main.go",
+    "description": "remote plugin/tool registration is allowed without approval or authentication across skill metadata/code"
+  },
+  {
+    "rule_id": "SKILL-R0125",
+    "source": "cmd/detector/main.go",
+    "description": "watch/hot-reload behavior is paired with remote fetch and dynamic module loading across skill files"
+  },
+  {
+    "rule_id": "SKILL-R0126",
+    "source": "cmd/detector/main.go",
+    "description": "host startup/profile/authorized-key persistence is paired with remote or credential behavior"
+  },
+  {
+    "rule_id": "SKILL-R0127",
+    "source": "cmd/detector/main.go",
+    "description": "unsafe deserialization primitive is paired with file, network, decoded, config, or user-controlled input across skill files"
+  },
+  {
+    "rule_id": "SKILL-R0128",
+    "source": "cmd/detector/main.go",
+    "description": "MCP or agent config combines remote/latest package runner material with approval bypass or auto-approval"
+  },
+  {
+    "rule_id": "SKILL-R0129",
+    "source": "cmd/detector/main.go",
+    "description": "cloud metadata or Kubernetes service-account credential access is paired with outbound upload behavior"
+  },
+  {
+    "rule_id": "SKILL-R0130",
+    "source": "cmd/detector/main.go",
+    "description": "CI workflow identity or secret token material is paired with an external HTTP sink"
+  },
+  {
+    "rule_id": "SKILL-R0131",
+    "source": "cmd/detector/main.go",
+    "description": "agent policy/instruction files are modified or guardrails disabled while risky network, dynamic loading, or credential behavior is present"
+  },
+  {
+    "rule_id": "SKILL-R0132",
+    "source": "cmd/detector/main.go",
+    "description": "dynamic rule family"
+  },
+  {
+    "rule_id": "SKILL-R0133",
+    "source": "cmd/detector/main.go",
+    "description": "loop115 cross-file fusion: concrete credential store access appears in one skill file and outbound upload/webhook behavior appears elsewhere"
+  },
+  {
+    "rule_id": "SKILL-R0134",
+    "source": "cmd/detector/main.go",
+    "description": "loop115 cross-file fusion: install/build lifecycle material is paired with remote download and execution across files"
+  },
+  {
+    "rule_id": "SKILL-R0135",
+    "source": "cmd/detector/main.go",
+    "description": "loop115 cross-file fusion: unsafe deserialization primitive is paired with untrusted file/network/config input"
+  },
+  {
+    "rule_id": "SKILL-R0136",
+    "source": "cmd/detector/main.go",
+    "description": "loop115 cross-file fusion: hot-update or post-scan refresh pulls remote material and dynamically reloads it"
+  },
+  {
+    "rule_id": "SKILL-R0137",
+    "source": "cmd/detector/main.go",
+    "description": "loop115 cross-file fusion: remote plugin/tool registration combines remote code loading with approval or authentication bypass"
+  },
+  {
+    "rule_id": "SKILL-R0138",
+    "source": "cmd/detector/main.go",
+    "description": "multiple correlated risk signals were found"
+  },
+  {
+    "rule_id": "SKILL-R0139",
+    "source": "cmd/detector/main.go",
+    "description": "contains persistence or startup modification behavior near execution, write, or network logic"
+  },
+  {
+    "rule_id": "SKILL-R0140",
+    "source": "cmd/detector/main.go",
+    "description": "explicitly describes credential harvesting or data exfiltration behavior in executable skill material"
+  },
+  {
+    "rule_id": "SKILL-R0141",
+    "source": "cmd/detector/main.go",
+    "description": "instruction document appears to direct the skill toward hidden credential access, exfiltration, or policy override"
+  },
+  {
+    "rule_id": "SKILL-R0142",
+    "source": "cmd/detector/main.go",
+    "description": "credential or token material is paired with outbound network behavior"
+  },
+  {
+    "rule_id": "SKILL-R0143",
+    "source": "cmd/detector/main.go",
+    "description": "dependency metadata allows unpinned, remote, or alternate-index package resolution"
+  },
+  {
+    "rule_id": "SKILL-R0144",
+    "source": "cmd/detector/main.go",
+    "description": "manifest grants access to home, system, credential, or browser storage locations"
+  },
+  {
+    "rule_id": "SKILL-R0145",
+    "source": "cmd/detector/main.go",
+    "description": "decoded or reconstructed content reaches command/eval execution with scanner, sandbox, or evasion context"
+  },
+  {
+    "rule_id": "SKILL-R0146",
+    "source": "cmd/detector/main.go",
+    "description": "decoded or reconstructed content reaches command/eval execution"
+  },
+  {
+    "rule_id": "SKILL-R0147",
+    "source": "cmd/detector/main.go",
+    "description": "skill/plugin logic is reused or bridged across agent, browser, IDE, or extension platforms"
+  },
+  {
+    "rule_id": "SKILL-R0148",
+    "source": "cmd/detector/main.go",
+    "description": "targets credential, cloud, package-manager, browser, OIDC, or keychain material"
+  },
+  {
+    "rule_id": "SKILL-R0149",
+    "source": "cmd/detector/main.go",
+    "description": "persistence/startup modification appears together with network, execution, or secret access"
+  },
+  {
+    "rule_id": "SKILL-R0150",
+    "source": "cmd/detector/main.go",
+    "description": "skill/plugin material appears reused or bridged across multiple agent, IDE, browser, or extension platforms"
+  }
+]

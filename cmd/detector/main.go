@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -23,12 +21,17 @@ type Result struct {
 }
 
 type FindingAudit struct {
-	RuleID   string  `json:"rule_id"`
-	Category string  `json:"category"`
-	Weight   float64 `json:"weight"`
-	File     string  `json:"file"`
-	Reason   string  `json:"reason"`
-	Strong   bool    `json:"strong"`
+	Fingerprint  string  `json:"finding_fingerprint"`
+	LegacyRuleID string  `json:"legacy_rule_id,omitempty"`
+	IDStability  string  `json:"id_stability"`
+	StartLine    int     `json:"start_line,omitempty"`
+	EndLine      int     `json:"end_line,omitempty"`
+	RuleID       string  `json:"rule_id"`
+	Category     string  `json:"category"`
+	Weight       float64 `json:"weight"`
+	File         string  `json:"file"`
+	Reason       string  `json:"reason"`
+	Strong       bool    `json:"strong"`
 }
 
 type Finding struct {
@@ -37,6 +40,10 @@ type Finding struct {
 	File     string
 	Reason   string
 	Strong   bool
+
+	RuleID    string
+	StartLine int
+	EndLine   int
 }
 
 type FileBlob struct {
@@ -48,6 +55,8 @@ type FileBlob struct {
 	IsBinary bool
 	Magic    string
 	Size     int64
+
+	Sampled bool
 }
 
 type SkillReport struct {
@@ -73,78 +82,14 @@ const (
 	maxBlobsPerSkill = 4096
 )
 
-func main() {
-	inputDir := getenv("SKILLS_DIR", defaultInputDir)
-	outputDir := getenv("OUTPUT_DIR", defaultOutputDir)
-	if len(os.Args) >= 2 && os.Args[1] != "" {
-		inputDir = os.Args[1]
-	}
-	if len(os.Args) >= 3 && os.Args[2] != "" {
-		outputDir = os.Args[2]
-	}
-	if err := validateInputRoot(inputDir); err != nil {
-		fail("validate input dir", err)
-	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		fail("create output dir", err)
-	}
-	outPath := filepath.Join(outputDir, "results.jsonl")
-	tmpPath := outPath + ".tmp"
-	out, err := os.Create(tmpPath)
-	if err != nil {
-		fail("create results.jsonl.tmp", err)
-	}
-	writer := bufio.NewWriter(out)
-
-	skills, err := discoverSkills(inputDir)
-	if err != nil {
-		fail("discover skills", err)
-	}
-	metadataRows := make([]ScanMetadata, 0, len(skills))
-	auditRows := make([]AnalysisMetadata, 0, len(skills))
-	enc := json.NewEncoder(writer)
-	enc.SetEscapeHTML(false)
-	for _, skill := range skills {
-		report := safeAnalyzeSkill(skill.Path)
-		metadataRows = append(metadataRows, newScanMetadata(skill.ID, report.Scan))
-		auditRows = append(auditRows, newAnalysisMetadata(skill.ID, report))
-		res := Result{
-			SkillID:        skill.ID,
-			Verdict:        report.Verdict,
-			EngineCategory: report.EngineCategory,
-			EvidenceText:   report.EvidenceText,
-		}
-		if err := enc.Encode(res); err != nil {
-			fail("write result", err)
-		}
-	}
-	if err := writer.Flush(); err != nil {
-		fail("flush results.jsonl", err)
-	}
-	if err := out.Close(); err != nil {
-		fail("close results.jsonl.tmp", err)
-	}
-	if err := commitResults(tmpPath, outPath); err != nil {
-		fail("commit results.jsonl", err)
-	}
-	if err := writeScanMetadata(outputDir, metadataRows); err != nil {
-		fail("write scan-metadata.jsonl", err)
-	}
-	if err := writeAnalysisMetadata(outputDir, auditRows); err != nil {
-		fail("write analysis-metadata.jsonl", err)
-	}
-
-	if incomplete := countIncompleteScans(metadataRows); incomplete > 0 && !partialScansAllowed() {
-		_, _ = fmt.Fprintf(os.Stderr, "scan incomplete: %d skill(s); see %s\n", incomplete, filepath.Join(outputDir, "scan-metadata.jsonl"))
-		os.Exit(incompleteScanExitCode)
-	}
-}
+func main() { os.Exit(runCLI(os.Args[1:])) }
 
 func safeAnalyzeSkill(root string) (report SkillReport) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			status := newScanStatus()
 			status.InternalError = fmt.Sprint(recovered)
+			status.Coverage = Coverage{}
 			status.markIncomplete("internal scanner error")
 			report = SkillReport{
 				Verdict:        "suspicious",
@@ -177,28 +122,7 @@ func confidenceFor(report SkillReport) float64 {
 
 type skillPath struct{ ID, Path string }
 
-func discoverSkills(input string) ([]skillPath, error) {
-	entries, err := os.ReadDir(input)
-	if err != nil {
-		return nil, err
-	}
-	var out []skillPath
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		out = append(out, skillPath{ID: name, Path: filepath.Join(input, name)})
-	}
-	if len(out) == 0 {
-		out = append(out, skillPath{ID: filepath.Base(filepath.Clean(input)), Path: input})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
+func discoverSkills(input string) ([]skillPath, error) { return discoverSkillsMode(input, "auto") }
 
 func analyzeSkill(root string) SkillReport {
 	// v33 keeps the v32 detection policy but collects the v25 and v26 file views
@@ -241,7 +165,7 @@ func analyzeSkill(root string) SkillReport {
 	return enforceScanCompleteness(base, status)
 }
 
-func findingRuleID(f Finding) string {
+func legacyFindingRuleID(f Finding) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(strings.ToLower(f.Category + "|" + f.Reason)))
 	return fmt.Sprintf("%s-%08x", strings.ToUpper(f.Category), h.Sum32())
@@ -266,12 +190,17 @@ func auditTriggerFindings(findings []Finding, category string, limit int) []Find
 	audits := make([]FindingAudit, 0, len(selected))
 	for _, finding := range selected {
 		audits = append(audits, FindingAudit{
-			RuleID:   findingRuleID(finding),
-			Category: finding.Category,
-			Weight:   finding.Weight,
-			File:     finding.File,
-			Reason:   finding.Reason,
-			Strong:   finding.Strong,
+			RuleID:       findingRuleID(finding),
+			Fingerprint:  findingFingerprint(finding),
+			LegacyRuleID: legacyFindingRuleID(finding),
+			IDStability:  ruleIDStability(finding),
+			StartLine:    finding.StartLine,
+			EndLine:      finding.EndLine,
+			Category:     finding.Category,
+			Weight:       finding.Weight,
+			File:         finding.File,
+			Reason:       finding.Reason,
+			Strong:       finding.Strong,
 		})
 	}
 	return audits
@@ -532,7 +461,7 @@ func collectFilesDual(root string) ([]FileBlob, []FileBlob) {
 
 func analyzeFile(b FileBlob) []Finding {
 	if b.IsBinary {
-		return []Finding{{"ast01", 2.8, b.Rel, "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion", false}}
+		return []Finding{{"ast01", 2.8, b.Rel, "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion", false, "SKILL-R0007", 0, 0}}
 	}
 	rawC := b.Lower
 	c := analysisText(b)
@@ -551,290 +480,307 @@ func analyzeFile(b FileBlob) []Finding {
 	// pass-protected archives, known redirectors, or base64 shell payload markers. They catch
 	// social-engineering SKILL.md attacks without broadly treating normal documentation as code.
 	if openClawCampaignIndicator(c) {
-		f = append(f, Finding{"ast01", 7.2, rel, "SKILL instructions require a fake OpenClaw/ClawHub prerequisite and point to known malware installer, paste, archive, or encoded payload indicators", true})
+		f = append(f, Finding{"ast01", 7.2, rel, "SKILL instructions require a fake OpenClaw/ClawHub prerequisite and point to known malware installer, paste, archive, or encoded payload indicators", true, "SKILL-R0008", 0, 0})
 	}
 	if markdownInstallerTrap(c, b) {
-		f = append(f, Finding{"ast01", 4.9, rel, "markdown skill instructions combine a prerequisite-download lure with paste-site, pass-protected archive, encoded shell, or credential-exfiltration indicators", true})
+		f = append(f, Finding{"ast01", 4.9, rel, "markdown skill instructions combine a prerequisite-download lure with paste-site, pass-protected archive, encoded shell, or credential-exfiltration indicators", true, "SKILL-R0009", 0, 0})
 	}
 	if markdownBase64ShellPayload(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "skill-facing markdown contains an inline base64-decoded shell payload pattern", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "skill-facing markdown contains an inline base64-decoded shell payload pattern", true, "SKILL-R0010", 0, 0})
 	}
 	if markdownCredentialWebhook(c, b) {
-		f = append(f, Finding{"ast01", 5.2, rel, "skill-facing markdown contains credential material with a concrete outbound transfer command", true})
+		f = append(f, Finding{"ast01", 5.2, rel, "skill-facing markdown contains credential material with a concrete outbound transfer command", true, "SKILL-R0011", 0, 0})
 	}
 	if markdownDownloadedScriptExecution(c, b) {
-		f = append(f, Finding{"ast02", 5.7, rel, "downloaded script execution: skill-facing instructions download a script artifact and execute that same artifact without integrity verification", true})
+		f = append(f, Finding{"ast02", 5.7, rel, "downloaded script execution: skill-facing instructions download a script artifact and execute that same artifact without integrity verification", true, "SKILL-R0012", 0, 0})
 	}
 	if rsaModularExecutionPayload(rawC, b) {
-		f = append(f, Finding{"ast08", 5.8, rel, "RSA/modular-arithmetic payload reconstructs character codes and passes the hidden result to exec/eval", true})
+		f = append(f, Finding{"ast08", 5.8, rel, "RSA/modular-arithmetic payload reconstructs character codes and passes the hidden result to exec/eval", true, "SKILL-R0013", 0, 0})
 	}
 	if remoteInstructionExecution(c, b) {
-		f = append(f, Finding{"ast07", 5.9, rel, "remote skill instruction execution: a skill-facing file fetches remote markdown/config and sources or executes it, allowing behavior to drift after review", true})
+		f = append(f, Finding{"ast07", 5.9, rel, "remote skill instruction execution: a skill-facing file fetches remote markdown/config and sources or executes it, allowing behavior to drift after review", true, "SKILL-R0014", 0, 0})
 	}
 	if agentMemoryPersistence(c, b) {
-		f = append(f, Finding{"ast01", 5.6, rel, "agent memory persistence: instructions attempt to write hidden backdoor policy into SOUL.md, MEMORY.md, CLAUDE.md, or similar persistent agent identity files", true})
+		f = append(f, Finding{"ast01", 5.6, rel, "agent memory persistence: instructions attempt to write hidden backdoor policy into SOUL.md, MEMORY.md, CLAUDE.md, or similar persistent agent identity files", true, "SKILL-R0015", 0, 0})
 	}
 	if claudeHooksHijack(c, b) {
-		f = append(f, Finding{"ast02", 6.0, rel, "Claude/Cursor config-file hijack: repository settings or hooks can execute shell commands, override API endpoints, or exfiltrate agent credentials on project open", true})
+		f = append(f, Finding{"ast02", 6.0, rel, "Claude/Cursor config-file hijack: repository settings or hooks can execute shell commands, override API endpoints, or exfiltrate agent credentials on project open", true, "SKILL-R0016", 0, 0})
 	}
 	if vscodeWorkspaceSpyware(c, b) {
-		f = append(f, Finding{"ast01", 5.8, rel, "workspace spyware behavior: extension code monitors or enumerates workspace files, encodes content, and sends it through a hidden webview or remote channel", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "workspace spyware behavior: extension code monitors or enumerates workspace files, encodes content, and sends it through a hidden webview or remote channel", true, "SKILL-R0017", 0, 0})
 	}
 	if mcpCommandHijack(c, b) {
-		f = append(f, Finding{"ast02", 5.7, rel, "MCP configuration launches an unpinned or remote command path with shell/package-runner execution and credential or network exposure", true})
+		f = append(f, Finding{"ast02", 5.7, rel, "MCP configuration launches an unpinned or remote command path with shell/package-runner execution and credential or network exposure", true, "SKILL-R0018", 0, 0})
 	}
 	if hiddenPromptPayload(c, b) {
-		f = append(f, Finding{"ast04", 5.0, rel, "hidden prompt payload: skill-facing instructions impersonate system/developer policy while directing command execution, credential access, or exfiltration", true})
+		f = append(f, Finding{"ast04", 5.0, rel, "hidden prompt payload: skill-facing instructions impersonate system/developer policy while directing command execution, credential access, or exfiltration", true, "SKILL-R0019", 0, 0})
 	}
 	if concealedOperationalExecution(c, b) {
-		f = append(f, Finding{"ast08", 5.2, rel, "concealed operational execution: skill instructions require a script, shell, or helper command to run without user-visible disclosure or approval", true})
+		f = append(f, Finding{"ast08", 5.2, rel, "concealed operational execution: skill instructions require a script, shell, or helper command to run without user-visible disclosure or approval", true, "SKILL-R0020", 0, 0})
 	}
 	if destructiveCleanupWithoutApproval(c, b) {
-		f = append(f, Finding{"ast01", 3.2, rel, "irreversible cleanup directive: skill instructions automatically delete, purge, wipe, or remove original user files without approval in the same action block", false})
+		f = append(f, Finding{"ast01", 3.2, rel, "irreversible cleanup directive: skill instructions automatically delete, purge, wipe, or remove original user files without approval in the same action block", false, "SKILL-R0021", 0, 0})
 	}
 	if reverseShellBackdoor(c, b) {
-		f = append(f, Finding{"ast01", 6.4, rel, "reverse shell or backdoor payload: skill material contains netcat/dev-tcp/socat/powershell command-and-control execution patterns", true})
+		f = append(f, Finding{"ast01", 6.4, rel, "reverse shell or backdoor payload: skill material contains netcat/dev-tcp/socat/powershell command-and-control execution patterns", true, "SKILL-R0022", 0, 0})
 	}
 	if conditionalOrDelayedPayload(c, b) {
 		w, strong := 5.4, true
 		if b.IsDoc && !concreteRiskFence(c) {
 			w, strong = 3.2, false
 		}
-		f = append(f, Finding{"ast08", w, rel, "conditional or delayed malicious payload: suspicious credential/network/command behavior is gated on time, host, platform, CI, sandbox, or delayed execution checks", strong})
+		f = append(f, Finding{"ast08", w, rel, "conditional or delayed malicious payload: suspicious credential/network/command behavior is gated on time, host, platform, CI, sandbox, or delayed execution checks", strong, "SKILL-R0023", 0, 0})
 	}
 	if cryptoWalletExfiltration(c, b) {
-		f = append(f, Finding{"ast01", 5.8, rel, "crypto wallet exfiltration: wallet seed, keypair, browser-wallet, or keystore material is read near outbound network or command execution behavior", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "crypto wallet exfiltration: wallet seed, keypair, browser-wallet, or keystore material is read near outbound network or command execution behavior", true, "SKILL-R0024", 0, 0})
 	}
 	if clickFixSocialEngineering(c, b) {
-		f = append(f, Finding{"ast01", 5.9, rel, "ClickFix-style social engineering: skill-facing instructions tell the user or agent to paste/run a terminal command that downloads, decodes, or executes a remote payload", true})
+		f = append(f, Finding{"ast01", 5.9, rel, "ClickFix-style social engineering: skill-facing instructions tell the user or agent to paste/run a terminal command that downloads, decodes, or executes a remote payload", true, "SKILL-R0025", 0, 0})
 	}
 	if browserExtensionCredentialBridge(c, b) {
-		f = append(f, Finding{"ast01", 5.7, rel, "browser extension credential bridge: extension permissions or scripts can read cookies/storage/tabs on all URLs and forward captured data to a remote channel", true})
+		f = append(f, Finding{"ast01", 5.7, rel, "browser extension credential bridge: extension permissions or scripts can read cookies/storage/tabs on all URLs and forward captured data to a remote channel", true, "SKILL-R0026", 0, 0})
 	}
 	if cloudMetadataOrLocalhostPivot(c, b) {
 		w, strong := 5.6, true
 		if b.IsDoc && !hasAny(c, []string{"requests.post", "curl -d", " --data", "webhook", "upload", "send to", "exfiltrate", "websocket.send"}) {
 			w, strong = 3.2, false
 		}
-		f = append(f, Finding{"ast06", w, rel, "cloud metadata or localhost pivot: skill material reaches host-local, cloud metadata, Kubernetes, Docker, Redis, etcd, or admin endpoints across an isolation boundary", strong})
+		f = append(f, Finding{"ast06", w, rel, "cloud metadata or localhost pivot: skill material reaches host-local, cloud metadata, Kubernetes, Docker, Redis, etcd, or admin endpoints across an isolation boundary", strong, "SKILL-R0027", 0, 0})
 	}
 	if prototypePollutionOrConfigInjection(c, b) {
-		f = append(f, Finding{"ast05", 5.2, rel, "prototype pollution or config injection: untrusted JSON/TOML/YAML/config input can merge into object prototypes or execution-sensitive options", true})
+		f = append(f, Finding{"ast05", 5.2, rel, "prototype pollution or config injection: untrusted JSON/TOML/YAML/config input can merge into object prototypes or execution-sensitive options", true, "SKILL-R0028", 0, 0})
 	}
 	if invisibleInstructionSmuggling(rawC, b) {
-		f = append(f, Finding{"ast04", 5.3, rel, "invisible instruction smuggling: skill-facing metadata hides policy-override or execution instructions in zero-width, bidi, HTML-comment, CSS-hidden, or encoded text", true})
+		f = append(f, Finding{"ast04", 5.3, rel, "invisible instruction smuggling: skill-facing metadata hides policy-override or execution instructions in zero-width, bidi, HTML-comment, CSS-hidden, or encoded text", true, "SKILL-R0029", 0, 0})
 	}
 	if hotReloadRemoteModule(c, b) {
-		f = append(f, Finding{"ast07", 5.6, rel, "hot-reload remote module: remote plugin/config/manifest content is downloaded and dynamically imported, required, loaded, or evaluated at runtime", true})
+		f = append(f, Finding{"ast07", 5.6, rel, "hot-reload remote module: remote plugin/config/manifest content is downloaded and dynamically imported, required, loaded, or evaluated at runtime", true, "SKILL-R0030", 0, 0})
 	}
 	if scannerResultTampering(c, b) {
-		f = append(f, Finding{"ast08", 5.1, rel, "scanner result tampering: skill code manipulates scan/audit results or hides files while suspicious execution, credential, network, or decode behavior is present", true})
+		f = append(f, Finding{"ast08", 5.1, rel, "scanner result tampering: skill code manipulates scan/audit results or hides files while suspicious execution, credential, network, or decode behavior is present", true, "SKILL-R0031", 0, 0})
 	}
 	if agentInstructionCredentialExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.8, rel, "agent instruction credential exfiltration: skill-facing instructions tell the agent to read credentials, SSH keys, wallet, browser, or environment data and send or report it externally", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "agent instruction credential exfiltration: skill-facing instructions tell the agent to read credentials, SSH keys, wallet, browser, or environment data and send or report it externally", true, "SKILL-R0032", 0, 0})
 	}
 	if agentIdentityFileWrite(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "agent identity persistence: executable or skill-facing material writes policy, backdoor, or credential-access instructions into persistent agent identity files", true})
+		f = append(f, Finding{"ast01", 5.5, rel, "agent identity persistence: executable or skill-facing material writes policy, backdoor, or credential-access instructions into persistent agent identity files", true, "SKILL-R0033", 0, 0})
 	}
 	if websocketCommandChannel(c, b) {
-		f = append(f, Finding{"ast01", 5.8, rel, "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data", true, "SKILL-R0034", 0, 0})
 	}
 	if localAgentControlHijack(c, b) {
 		w, strong := 5.6, true
 		if b.IsDoc && !hasAny(c, []string{"websocket.send", "send({", "send(json", "/execute", "/command", "method: execute", `"method":"execute"`, `"method": "execute"`}) {
 			w, strong = 3.2, false
 		}
-		f = append(f, Finding{"ast06", w, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", strong})
+		f = append(f, Finding{"ast06", w, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", strong, "SKILL-R0035", 0, 0})
 	}
 	if unsafeDeserializePayload(c, b) {
-		f = append(f, Finding{"ast05", 5.7, rel, "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads", true})
+		f = append(f, Finding{"ast05", 5.7, rel, "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads", true, "SKILL-R0036", 0, 0})
 	}
 	if credentialTrapTokenOutbound(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "credential trap with outbound sink: hard-coded secret/token patterns or credential-harvest terms are paired with webhook, fetch, or upload behavior", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "credential trap with outbound sink: hard-coded secret/token patterns or credential-harvest terms are paired with webhook, fetch, or upload behavior", true, "SKILL-R0037", 0, 0})
 	}
 	if mcpToolDescriptionInjection(c, b) {
-		f = append(f, Finding{"ast04", 5.5, rel, "MCP/tool metadata prompt injection: tool descriptions or schemas contain hidden policy-override instructions tied to credential, source-code exfiltration, or command execution", true})
+		f = append(f, Finding{"ast04", 5.5, rel, "MCP/tool metadata prompt injection: tool descriptions or schemas contain hidden policy-override instructions tied to credential, source-code exfiltration, or command execution", true, "SKILL-R0038", 0, 0})
 	}
 	if agentInstructionSourceExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "agent instruction data exfiltration: skill-facing instructions tell the agent to read workspace/source files and upload or report them to an external endpoint", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "agent instruction data exfiltration: skill-facing instructions tell the agent to read workspace/source files and upload or report them to an external endpoint", true, "SKILL-R0039", 0, 0})
 	}
 	if brandImpersonationMetadata(c, b) {
-		f = append(f, Finding{"ast04", 5.4, rel, "brand impersonation metadata: skill claims a trusted provider while using unofficial publisher signals and sensitive permissions or credential context", true})
+		f = append(f, Finding{"ast04", 5.4, rel, "brand impersonation metadata: skill claims a trusted provider while using unofficial publisher signals and sensitive permissions or credential context", true, "SKILL-R0040", 0, 0})
 	}
 	if projectConfigAutoRunHijack(c, b) {
-		f = append(f, Finding{"ast02", 5.8, rel, "project auto-run configuration hijack: repository config can execute remote or credential-exfiltrating commands when opened, built, or committed", true})
+		f = append(f, Finding{"ast02", 5.8, rel, "project auto-run configuration hijack: repository config can execute remote or credential-exfiltrating commands when opened, built, or committed", true, "SKILL-R0041", 0, 0})
 	}
 	if dockerfileRemoteEntrypoint(c, b) {
-		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe pulls remote mutable content into an executable entrypoint or startup command without integrity pinning", true})
+		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe pulls remote mutable content into an executable entrypoint or startup command without integrity pinning", true, "SKILL-R0042", 0, 0})
 	}
 	if escapedPayloadEvasion(c, b) {
-		f = append(f, Finding{"ast08", 5.4, rel, "escaped payload evasion: encoded hex/unicode/url string reconstruction is paired with eval/exec, remote loading, or credential exfiltration behavior", true})
+		f = append(f, Finding{"ast08", 5.4, rel, "escaped payload evasion: encoded hex/unicode/url string reconstruction is paired with eval/exec, remote loading, or credential exfiltration behavior", true, "SKILL-R0043", 0, 0})
 	}
 	if dependencyConfusionOrMutableInstaller(c, b) {
-		f = append(f, Finding{"ast02", 5.2, rel, "dependency confusion or mutable installer path: package metadata uses alternate registries, latest/mutable refs, or package runners with install-time execution risk", true})
+		f = append(f, Finding{"ast02", 5.2, rel, "dependency confusion or mutable installer path: package metadata uses alternate registries, latest/mutable refs, or package runners with install-time execution risk", true, "SKILL-R0044", 0, 0})
 	}
 	if knownTyposquatOrDependencyConfusion(c, b) {
-		f = append(f, Finding{"ast02", 5.4, rel, "known dependency-confusion or typosquat package pattern appears in skill package metadata", true})
+		f = append(f, Finding{"ast02", 5.4, rel, "known dependency-confusion or typosquat package pattern appears in skill package metadata", true, "SKILL-R0045", 0, 0})
 	}
 	if alternatePrivateIndexRisk(c, b) {
-		f = append(f, Finding{"ast02", 3.6, rel, "package metadata resolves private/internal dependency names through an alternate registry or index without an accompanying lock/provenance signal", false})
+		f = append(f, Finding{"ast02", 3.6, rel, "package metadata resolves private/internal dependency names through an alternate registry or index without an accompanying lock/provenance signal", false, "SKILL-R0046", 0, 0})
 	}
 	if ciWorkflowRemoteExecution(c, b) {
-		f = append(f, Finding{"ast02", 5.5, rel, "repository workflow/config executes remote installer content during CI or project automation", true})
+		f = append(f, Finding{"ast02", 5.5, rel, "repository workflow/config executes remote installer content during CI or project automation", true, "SKILL-R0047", 0, 0})
 	}
 	if localBinaryExecutionLure(c, b) {
-		f = append(f, Finding{"ast01", 5.0, rel, "skill-facing instructions require running a bundled local binary or installer helper before use, creating an opaque execution path", true})
+		f = append(f, Finding{"ast01", 5.0, rel, "skill-facing instructions require running a bundled local binary or installer helper before use, creating an opaque execution path", true, "SKILL-R0048", 0, 0})
 	}
 	if markdownOpaqueBinaryDownload(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "active skill instructions download a platform-specific opaque binary, mark it executable, and install or launch it without an integrity check", true})
+		f = append(f, Finding{"ast01", 5.5, rel, "active skill instructions download a platform-specific opaque binary, mark it executable, and install or launch it without an integrity check", true, "SKILL-R0049", 0, 0})
 	}
 	if bundledOpaqueBinaryExecution(rawC, b) {
-		f = append(f, Finding{"ast01", 5.3, rel, "skill instructions discover bundled native binaries, make them executable, and launch them with user-environment access without provenance or integrity verification", true})
+		f = append(f, Finding{"ast01", 5.3, rel, "skill instructions discover bundled native binaries, make them executable, and launch them with user-environment access without provenance or integrity verification", true, "SKILL-R0050", 0, 0})
 	}
 	if startupPersistencePayload(c, b) {
-		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true})
+		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true, "SKILL-R0051",
+
+			// v38-loop1: high-confidence recall micro-rules from the six rule-pack review.
+			// These only fire on concrete behavior chains and keep the original v38 thresholds intact.
+			0, 0})
 	}
-	// v38-loop1: high-confidence recall micro-rules from the six rule-pack review.
-	// These only fire on concrete behavior chains and keep the original v38 thresholds intact.
+
 	if microInstallRemoteExec(c, b) {
-		f = append(f, Finding{"ast02", 5.9, rel, "install lifecycle or build metadata downloads remote content and executes it", true})
+		f = append(f, Finding{"ast02", 5.9, rel, "install lifecycle or build metadata downloads remote content and executes it", true, "SKILL-R0052", 0, 0})
 	}
 	if microUnsafeYamlTag(c, b) {
-		f = append(f, Finding{"ast05", 5.8, rel, "YAML content contains object/apply/function tags capable of constructing executable objects", true})
+		f = append(f, Finding{"ast05", 5.8, rel, "YAML content contains object/apply/function tags capable of constructing executable objects", true, "SKILL-R0053", 0, 0})
 	}
 	if microHostIsolationStrong(c, b) {
-		f = append(f, Finding{"ast06", 5.7, rel, "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure", true})
+		f = append(f, Finding{"ast06", 5.7, rel, "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure", true, "SKILL-R0054",
+
+			// v38-loop2: agent runtime configuration and remote plugin registration chains.
+			0, 0})
 	}
-	// v38-loop2: agent runtime configuration and remote plugin registration chains.
+
 	if microAgentConfigHookRCE(c, b) {
-		f = append(f, Finding{"ast02", 5.8, rel, "agent or MCP configuration hook can launch shell/package-runner commands or rewrite model/network execution paths", true})
+		f = append(f, Finding{"ast02", 5.8, rel, "agent or MCP configuration hook can launch shell/package-runner commands or rewrite model/network execution paths", true, "SKILL-R0055", 0, 0})
 	}
 	if microRemotePluginNoApproval(c, b) {
-		f = append(f, Finding{"ast06", 5.4, rel, "remote plugin or tool registration is allowed without approval/authentication and can load external code", true})
+		f = append(f, Finding{"ast06", 5.4, rel, "remote plugin or tool registration is allowed without approval/authentication and can load external code", true, "SKILL-R0056", 0, 0})
 	}
 	if microSimpleHotReloadRemote(c, b) {
-		f = append(f, Finding{"ast07", 5.4, rel, "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime", true})
+		f = append(f, Finding{"ast07", 5.4, rel, "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime", true, "SKILL-R0057",
+
+			// v38-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
+			0, 0})
 	}
-	// v38-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
+
 	if microUnsafeDeserializeSourceSink(c, b) {
-		f = append(f, Finding{"ast05", 5.6, rel, "unsafe deserialization primitive is near file, network, stdin, argument, upload, or decoded input source", true})
+		f = append(f, Finding{"ast05", 5.6, rel, "unsafe deserialization primitive is near file, network, stdin, argument, upload, or decoded input source", true, "SKILL-R0058", 0, 0})
 	}
 	if microExecTaintedSourceSink(c, b) {
-		f = append(f, Finding{"ast01", 5.1, rel, "command/eval sink is near user, environment, decoded, network, or manifest-controlled input", true})
+		f = append(f, Finding{"ast01", 5.1, rel, "command/eval sink is near user, environment, decoded, network, or manifest-controlled input", true, "SKILL-R0059",
+
+			// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
+			0, 0})
 	}
-	// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
+
 	if microPIIOutboundChain(c, b) {
 		weight, strong := 3.0, false
 		if privacyEvasionSignal(c) {
 			weight, strong = 5.0, true
 		}
-		f = append(f, Finding{"ast03", weight, rel, "PII or personal-data collection is paired with webhook/upload/POST outbound transfer", strong})
+		f = append(f, Finding{"ast03", weight, rel, "PII or personal-data collection is paired with webhook/upload/POST outbound transfer", strong, "SKILL-R0060", 0, 0})
 	}
 	if microBrowserWalletStoreExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true})
-	}
-	// v38-loop6..15: additional high-confidence behavior chains only.
-	if microMCPRemoteAutoApprove(c, b) {
-		f = append(f, Finding{"ast02", 5.7, rel, "MCP/agent server configuration launches remote or latest package-runner code with approval bypass or auto-approval", true})
-	}
-	if microVSCodeExtensionWorkspaceExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "VS Code/IDE extension workspace file access is paired with outbound upload or telemetry sink", true})
-	}
-	if microBrowserExtensionBroadExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "browser extension broad host/cookie/storage permissions are paired with outbound exfiltration behavior", true})
-	}
-	if microCloudMetadataCredentialExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.7, rel, "cloud instance metadata credential endpoint access is paired with outbound exfiltration behavior", true})
-	}
-	if microKubeServiceAccountExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.6, rel, "Kubernetes service-account token access is paired with outbound upload or cluster pivot behavior", true})
-	}
-	if microShellCredentialStoreExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "shell history, netrc, npm, pypirc, git-credentials, or SSH config material is paired with outbound upload behavior", true})
-	}
-	if microCIIdentityTokenExfil(c, b) {
-		f = append(f, Finding{"ast02", 5.5, rel, "CI workflow requests identity/secrets tokens and sends them to an external HTTP sink", true})
-	}
-	if microDockerfileRemoteAddExec(c, b) {
-		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe downloads remote mutable content and executes it during build or entrypoint", true})
-	}
-	if microScanBypassSelfUpdate(c, b) {
-		f = append(f, Finding{"ast08", 5.3, rel, "skill-facing instructions describe scan-bypass or post-scan self-update behavior that fetches remote executable/instruction material", true})
-	}
-	if microPolicyFileTamper(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "skill modifies agent policy or instruction files to disable guards while enabling command/network behavior", true})
+		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true, "SKILL-R0061",
+
+			// v38-loop6..15: additional high-confidence behavior chains only.
+			0, 0})
 	}
 
-	// v38-loop16..115: table-driven high-confidence behavior-chain recall rules.
+	if microMCPRemoteAutoApprove(c, b) {
+		f = append(f, Finding{"ast02", 5.7, rel, "MCP/agent server configuration launches remote or latest package-runner code with approval bypass or auto-approval", true, "SKILL-R0062", 0, 0})
+	}
+	if microVSCodeExtensionWorkspaceExfil(c, b) {
+		f = append(f, Finding{"ast01", 5.5, rel, "VS Code/IDE extension workspace file access is paired with outbound upload or telemetry sink", true, "SKILL-R0063", 0, 0})
+	}
+	if microBrowserExtensionBroadExfil(c, b) {
+		f = append(f, Finding{"ast01", 5.5, rel, "browser extension broad host/cookie/storage permissions are paired with outbound exfiltration behavior", true, "SKILL-R0064", 0, 0})
+	}
+	if microCloudMetadataCredentialExfil(c, b) {
+		f = append(f, Finding{"ast01", 5.7, rel, "cloud instance metadata credential endpoint access is paired with outbound exfiltration behavior", true, "SKILL-R0065", 0, 0})
+	}
+	if microKubeServiceAccountExfil(c, b) {
+		f = append(f, Finding{"ast01", 5.6, rel, "Kubernetes service-account token access is paired with outbound upload or cluster pivot behavior", true, "SKILL-R0066", 0, 0})
+	}
+	if microShellCredentialStoreExfil(c, b) {
+		f = append(f, Finding{"ast01", 5.4, rel, "shell history, netrc, npm, pypirc, git-credentials, or SSH config material is paired with outbound upload behavior", true, "SKILL-R0067", 0, 0})
+	}
+	if microCIIdentityTokenExfil(c, b) {
+		f = append(f, Finding{"ast02", 5.5, rel, "CI workflow requests identity/secrets tokens and sends them to an external HTTP sink", true, "SKILL-R0068", 0, 0})
+	}
+	if microDockerfileRemoteAddExec(c, b) {
+		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe downloads remote mutable content and executes it during build or entrypoint", true, "SKILL-R0069", 0, 0})
+	}
+	if microScanBypassSelfUpdate(c, b) {
+		f = append(f, Finding{"ast08", 5.3, rel, "skill-facing instructions describe scan-bypass or post-scan self-update behavior that fetches remote executable/instruction material", true, "SKILL-R0070", 0, 0})
+	}
+	if microPolicyFileTamper(c, b) {
+		f = append(f, Finding{"ast01", 5.4, rel, "skill modifies agent policy or instruction files to disable guards while enabling command/network behavior", true, "SKILL-R0071",
+
+			// v38-loop16..115: table-driven high-confidence behavior-chain recall rules.
+			0, 0})
+	}
+
 	f = append(f, analyzeLoop16To115File(b)...)
 	if crossPlatformMetadataLoss(c, b) {
-		f = append(f, Finding{"ast10", 5.1, rel, "cross-platform port appears to drop or weaken security metadata such as risk tier, signatures, deny rules, allowlisted egress, or scoped permissions", true})
+		f = append(f, Finding{"ast10", 5.1, rel, "cross-platform port appears to drop or weaken security metadata such as risk tier, signatures, deny rules, allowlisted egress, or scoped permissions", true, "SKILL-R0072", 0, 0})
 	}
 
 	if cmdSink && (secretRead || netSink || decoder || hasAny(c, []string{"rm -rf", "/etc/passwd", "chmod 777", "bash -c", "sh -c"})) {
-		f = append(f, Finding{"ast01", 5.7, rel, "combines command execution with credential, network, destructive, or decoded input signals", true})
+		f = append(f, Finding{"ast01", 5.7, rel, "combines command execution with credential, network, destructive, or decoded input signals", true, "SKILL-R0073", 0, 0})
 	} else if cmdSink && b.IsCode {
-		f = append(f, Finding{"ast01", 3.0, rel, "contains executable command/eval sink in code", false})
+		f = append(f, Finding{"ast01", 3.0, rel, "contains executable command/eval sink in code", false, "SKILL-R0074", 0, 0})
 	}
 	if secretRead && netSink && fileRead {
-		f = append(f, Finding{"ast01", 6.2, rel, "reads secret-like data and sends it through a network sink", true})
+		f = append(f, Finding{"ast01", 6.2, rel, "reads secret-like data and sends it through a network sink", true, "SKILL-R0075", 0, 0})
 	}
 	if hasAny(c, []string{"rm -rf /", "shutil.rmtree", "os.remove", "unlink(", "deletefile", "format c:", "wipe"}) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.4, rel, "contains destructive file operation indicators", true})
+		f = append(f, Finding{"ast01", 4.4, rel, "contains destructive file operation indicators", true, "SKILL-R0076", 0, 0})
 	}
 	if secretRead && (fileRead || netSink || cmdSink) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.3, rel, "accesses credential-like material near file, network, or execution logic", true})
+		f = append(f, Finding{"ast01", 4.3, rel, "accesses credential-like material near file, network, or execution logic", true, "SKILL-R0077", 0, 0})
 	}
 	if netSink && decoder && b.IsCode {
-		f = append(f, Finding{"ast08", 4.0, rel, "network path is paired with encoded or reconstructed content handling", true})
+		f = append(f, Finding{"ast08", 4.0, rel, "network path is paired with encoded or reconstructed content handling", true, "SKILL-R0078", 0, 0})
 	}
 	if cmdSink && hasAny(c, []string{"input(", "argv", "req.body", "request.", "params", "metadata", "manifest", "config"}) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.1, rel, "user, metadata, or config-controlled value can reach command/eval execution", true})
+		f = append(f, Finding{"ast01", 4.1, rel, "user, metadata, or config-controlled value can reach command/eval execution", true, "SKILL-R0079", 0, 0})
 	}
 
 	if isPackagePath(rel) && hasAny(c, []string{"preinstall", "postinstall", "prepare", "setup_requires", "entry_points", "install_requires"}) && (cmdSink || netSink || decoder) {
-		f = append(f, Finding{"ast02", 6.4, rel, "package lifecycle metadata contains command, network, or decoded execution behavior", true})
+		f = append(f, Finding{"ast02", 6.4, rel, "package lifecycle metadata contains command, network, or decoded execution behavior", true, "SKILL-R0080", 0, 0})
 	}
 	if hasAny(c, []string{"curl | sh", "curl -fs", "wget -q", "pip install", "npm install", "go get", "go install", "bash <(", "sh <("}) && (isPackagePath(rel) || strings.Contains(rel, "install") || strings.Contains(rel, "update")) {
-		f = append(f, Finding{"ast02", 4.7, rel, "installer/update path can fetch or execute dependency content", true})
+		f = append(f, Finding{"ast02", 4.7, rel, "installer/update path can fetch or execute dependency content", true, "SKILL-R0081", 0, 0})
 	}
 	if hasAny(c, []string{"integrity=false", "strict-ssl=false", "--no-verify", "--trusted-host", "verify=false", "checksum=false", "skip checksum", "disable checksum", "ignore checksum"}) {
-		f = append(f, Finding{"ast02", 3.7, rel, "disables dependency integrity or transport verification", true})
+		f = append(f, Finding{"ast02", 3.7, rel, "disables dependency integrity or transport verification", true, "SKILL-R0082", 0, 0})
 	}
 	if isPackagePath(rel) && hasAny(c, []string{"prepublish", "prepublishonly", "npm_lifecycle_event", "node -e", "python -c", "install.js", "prepare"}) && (cmdSink || netSink || decoder || hasAny(c, []string{"https.request", "http.request", "child_process", "chmod +x"})) {
-		f = append(f, Finding{"ast02", 5.9, rel, "package lifecycle or installer script reaches network, command, or decoded execution behavior", true})
+		f = append(f, Finding{"ast02", 5.9, rel, "package lifecycle or installer script reaches network, command, or decoded execution behavior", true, "SKILL-R0083", 0, 0})
 	}
 	if isPackagePath(rel) && hasAny(c, []string{"cmdclass", "build_ext", "develop", "build-backend", "backend-path", "extra-index-url"}) && (cmdSink || netSink || hasAny(c, []string{"download", "urlopen", "requests.", "subprocess"})) {
-		f = append(f, Finding{"ast02", 5.0, rel, "python build/install metadata can run dynamic dependency or build-time code", true})
+		f = append(f, Finding{"ast02", 5.0, rel, "python build/install metadata can run dynamic dependency or build-time code", true, "SKILL-R0084", 0, 0})
 	}
 
 	if b.IsMeta && hasAny(c, []string{"permission", "capability", "scope", "allow"}) && manifestBroadCapability(c) {
-		f = append(f, Finding{"ast03", 4.1, rel, "manifest declares broad filesystem, network, shell, host, or wildcard capability", false})
+		f = append(f, Finding{"ast03", 4.1, rel, "manifest declares broad filesystem, network, shell, host, or wildcard capability", false, "SKILL-R0085", 0, 0})
 	}
 	if b.IsMeta && hasAny(c, []string{"ignore previous", "ignore all previous", "system prompt", "developer message", "hidden instruction", "do not disclose", "policy override", "bypass safety", "jailbreak", "scan bypass"}) {
-		f = append(f, Finding{"ast04", 4.4, rel, "metadata includes hidden prompt, policy override, or scanner-bypass instruction", true})
+		f = append(f, Finding{"ast04", 4.4, rel, "metadata includes hidden prompt, policy override, or scanner-bypass instruction", true, "SKILL-R0086", 0, 0})
 	}
 	if b.IsMeta && hasAny(c, []string{"effective_policy", "policy cache", "cross_scope", "cross-scope", "parent workspace", "workspace.parent", "metadata handler"}) {
-		f = append(f, Finding{"ast04", 4.2, rel, "metadata references cross-scope policy or effective metadata handling", false})
+		f = append(f, Finding{"ast04", 4.2, rel, "metadata references cross-scope policy or effective metadata handling", false, "SKILL-R0087", 0, 0})
 	}
 	if hasAny(c, []string{"ignore previous", "system prompt", "developer message", "hidden instruction", "policy override", "bypass safety", "jailbreak"}) && b.IsCode {
-		f = append(f, Finding{"ast04", 3.6, rel, "code contains hidden instruction or policy-override text used by the skill", false})
+		f = append(f, Finding{"ast04", 3.6, rel, "code contains hidden instruction or policy-override text used by the skill", false, "SKILL-R0088", 0, 0})
 	}
 
 	if hasAny(c, []string{"pickle.load", "pickle.loads", "dill.load", "dill.loads", "marshal.loads", "jsonpickle.decode", "objectinputstream", "node-serialize", "unserialize("}) {
-		f = append(f, Finding{"ast05", 5.8, rel, "uses unsafe deserialization primitive", true})
+		f = append(f, Finding{"ast05", 5.8, rel, "uses unsafe deserialization primitive", true, "SKILL-R0089", 0, 0})
 	}
 	if strings.Contains(c, "yaml.load") && !strings.Contains(c, "safe_load") && !strings.Contains(c, "safeloader") {
-		f = append(f, Finding{"ast05", 5.3, rel, "uses yaml.load without SafeLoader/safe_load", true})
+		f = append(f, Finding{"ast05", 5.3, rel, "uses yaml.load without SafeLoader/safe_load", true, "SKILL-R0090", 0, 0})
 	}
 	if hasAny(c, []string{"loader=yaml.loader", "loader = yaml.loader", "yaml.loader", `typ="unsafe"`, `typ = "unsafe"`, "typ='unsafe'", "typ = 'unsafe'"}) && !strings.Contains(c, "safe_load") && !strings.Contains(c, "safeloader") {
-		f = append(f, Finding{"ast05", 5.1, rel, "uses an unsafe YAML loader configuration", true})
+		f = append(f, Finding{"ast05", 5.1, rel, "uses an unsafe YAML loader configuration", true, "SKILL-R0091", 0, 0})
 	}
 	if hasAny(c, []string{"torch.load(", "pandas.read_pickle", "pd.read_pickle", "numpy.load(", "np.load("}) && hasAny(c, []string{"allow_pickle=true", "allow_pickle = true", "input(", "argv", "request.", "upload", "url", "http", "file"}) {
-		f = append(f, Finding{"ast05", 4.8, rel, "loads pickle-capable serialized data from user, file, or remote-influenced input", true})
+		f = append(f, Finding{"ast05", 4.8, rel, "loads pickle-capable serialized data from user, file, or remote-influenced input", true, "SKILL-R0092", 0, 0})
 	}
 	if hasAny(c, []string{"deserialize", "fromjson", "loads("}) && cmdSink {
-		f = append(f, Finding{"ast05", 4.2, rel, "deserialization path is near command/eval execution sink", true})
+		f = append(f, Finding{"ast05", 4.2, rel, "deserialization path is near command/eval execution sink", true, "SKILL-R0093", 0, 0})
 	}
 
 	if isolationBoundarySignal(c, b) {
@@ -842,16 +788,16 @@ func analyzeFile(b FileBlob) []Finding {
 		if b.IsDoc {
 			w, strong = 2.8, false
 		}
-		f = append(f, Finding{"ast06", w, rel, "references container, host, namespace, mount, or privileged isolation boundary", strong})
+		f = append(f, Finding{"ast06", w, rel, "references container, host, namespace, mount, or privileged isolation boundary", strong, "SKILL-R0094", 0, 0})
 	}
 	if isolationSecretBoundarySignal(c, b) {
-		f = append(f, Finding{"ast06", 5.1, rel, "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary", true})
+		f = append(f, Finding{"ast06", 5.1, rel, "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary", true, "SKILL-R0095", 0, 0})
 	}
 	if hasAny(c, []string{"extractall(", "tarfile.", "zipfile."}) && hasAny(c, []string{"../", "..\\", "path traversal", "zip slip", "tar slip"}) {
-		f = append(f, Finding{"ast06", 4.3, rel, "archive extraction logic may allow path traversal across the intended skill boundary", true})
+		f = append(f, Finding{"ast06", 4.3, rel, "archive extraction logic may allow path traversal across the intended skill boundary", true, "SKILL-R0096", 0, 0})
 	}
 	if hasAny(c, []string{"../..", "..\\.."}) && (fileRead || fileWrite || strings.Contains(c, "path.join") || strings.Contains(c, "filepath.join")) {
-		f = append(f, Finding{"ast06", 3.9, rel, "uses path traversal pattern near file access logic", true})
+		f = append(f, Finding{"ast06", 3.9, rel, "uses path traversal pattern near file access logic", true, "SKILL-R0097", 0, 0})
 	}
 
 	if hasAny(c, []string{"auto_update", "autoupdate", "check_update", "update_url", "remote_config", "plugin_url", "manifest_url", "version_url", "latest version", "download update", "self_update", "update manifest", "hotfix", "remote recipe", "recipe_url"}) {
@@ -861,10 +807,10 @@ func analyzeFile(b FileBlob) []Finding {
 			w = 5.5
 			strong = true
 		}
-		f = append(f, Finding{"ast07", w, rel, "implements remote update/configuration or version-drift behavior", strong})
+		f = append(f, Finding{"ast07", w, rel, "implements remote update/configuration or version-drift behavior", strong, "SKILL-R0098", 0, 0})
 	}
 	if netSink && fileWrite && hasAny(c, []string{"plugin", "skill", "manifest", "recipe", "config", "module"}) {
-		f = append(f, Finding{"ast07", 5.2, rel, "network-fetched content can rewrite skill/plugin/config material", true})
+		f = append(f, Finding{"ast07", 5.2, rel, "network-fetched content can rewrite skill/plugin/config material", true, "SKILL-R0099", 0, 0})
 	}
 	if hasAny(c, []string{"remote_policy", "remote policy", "feature_flag", "feature flag", "plugin_registry", "recipe_registry", "policy cache", "latest.json", "release manifest", "version manifest", "downloaded config"}) {
 		w := 3.4
@@ -873,17 +819,17 @@ func analyzeFile(b FileBlob) []Finding {
 			w = 5.4
 			strong = true
 		}
-		f = append(f, Finding{"ast07", w, rel, "uses remote policy, registry, feature flag, or release manifest that can drift skill behavior", strong})
+		f = append(f, Finding{"ast07", w, rel, "uses remote policy, registry, feature flag, or release manifest that can drift skill behavior", strong, "SKILL-R0100", 0, 0})
 	}
 
 	if decoder && cmdSink {
-		f = append(f, Finding{"ast08", 5.2, rel, "decoded or reconstructed content reaches command/eval execution", true})
+		f = append(f, Finding{"ast08", 5.2, rel, "decoded or reconstructed content reaches command/eval execution", true, "SKILL-R0101", 0, 0})
 	}
 	if hasAny(c, []string{"sandbox", "scanner", "analysis", "automated", "sleep(", "time.sleep", "random", "process.env.ci", "github_actions", "gitlab_ci", "circleci", "jenkins", "buildkite"}) && (cmdSink || netSink || decoder) {
-		f = append(f, Finding{"ast08", 4.2, rel, "contains anti-analysis, timing, or environment-gated behavior near suspicious sinks", false})
+		f = append(f, Finding{"ast08", 4.2, rel, "contains anti-analysis, timing, or environment-gated behavior near suspicious sinks", false, "SKILL-R0102", 0, 0})
 	}
 	if hasAny(c, []string{"disable_audit", "audit=false", "logging=false", "guardrail=false", "policy=false", "enforce=false", "allow_unreviewed", "skip_review", "governance"}) {
-		f = append(f, Finding{"ast09", 2.9, rel, "governance, audit, policy, or guardrail enforcement appears disabled or bypassed", false})
+		f = append(f, Finding{"ast09", 2.9, rel, "governance, audit, policy, or guardrail enforcement appears disabled or bypassed", false, "SKILL-R0103", 0, 0})
 	}
 
 	credentialAction := (fileRead || hasAny(c, []string{"cat ", "type ", "read ~", "read /", "read the ", "copy the ", "collect ", "extract "})) && (netSink || cmdSink || hasAny(c, []string{"send to", "send it", "upload", "post to", "report externally", "exfiltrate"}))
@@ -900,7 +846,7 @@ func analyzeFile(b FileBlob) []Finding {
 			// without code, network, command, or cross-file behavior.
 			w, strong = 3.1, false
 		}
-		f = append(f, Finding{"ast10", w, rel, "references reusable cross-platform credentials, cookies, tokens, or cloud/session material", strong})
+		f = append(f, Finding{"ast10", w, rel, "references reusable cross-platform credentials, cookies, tokens, or cloud/session material", strong, "SKILL-R0104", 0, 0})
 	}
 	if !benignInstructionalContext(c) && hasAny(c, []string{".kube/config", ".docker/config.json", ".npmrc", ".pypirc", ".aws/credentials", ".ssh/id_rsa", "known_hosts", "browser cookies"}) {
 		w, strong := 3.0, false
@@ -910,7 +856,7 @@ func analyzeFile(b FileBlob) []Finding {
 		if b.IsMeta && !b.IsCode {
 			w, strong = 3.2, false
 		}
-		f = append(f, Finding{"ast10", w, rel, "targets common cross-platform credential/session files", strong})
+		f = append(f, Finding{"ast10", w, rel, "targets common cross-platform credential/session files", strong, "SKILL-R0105", 0, 0})
 	}
 	if !benignInstructionalContext(c) && hasAny(c, []string{".netrc", "git-credentials", "application_default_credentials.json", "gcloud", "azure profile", "azure/accessTokens.json", "auths", "_authtoken", "npm_token", "huggingface token", "keyring", "keytar", "local state", "login data", "cookies sqlite", "actions_id_token_request_token", "aws_web_identity_token_file"}) {
 		w, strong := 3.0, false
@@ -920,7 +866,7 @@ func analyzeFile(b FileBlob) []Finding {
 		if b.IsMeta && !b.IsCode {
 			w, strong = 3.2, false
 		}
-		f = append(f, Finding{"ast10", w, rel, "targets cloud, package-manager, browser, OIDC, or keychain credential material reusable across platforms", strong})
+		f = append(f, Finding{"ast10", w, rel, "targets cloud, package-manager, browser, OIDC, or keychain credential material reusable across platforms", strong, "SKILL-R0106", 0, 0})
 	}
 
 	return f
@@ -1058,46 +1004,46 @@ func analyzeCrossFile(blobs []FileBlob) []Finding {
 		}
 	}
 	if hasManifestBroad && hasSink {
-		f = append(f, Finding{"ast03", 3.8, "manifest+code", "broad declared capability is paired with executable command/eval behavior", true})
+		f = append(f, Finding{"ast03", 3.8, "manifest+code", "broad declared capability is paired with executable command/eval behavior", true, "SKILL-R0107", 0, 0})
 	}
 	if hasPkgLifecycle && hasInstallerExecNet {
-		f = append(f, Finding{"ast02", 6.6, "package lifecycle+installer", "package lifecycle script is paired with installer network fetch and command execution", true})
+		f = append(f, Finding{"ast02", 6.6, "package lifecycle+installer", "package lifecycle script is paired with installer network fetch and command execution", true, "SKILL-R0108", 0, 0})
 	}
 	if hasPythonBuildHook && hasBuildExecNet {
-		f = append(f, Finding{"ast02", 6.1, "python build metadata+code", "python build metadata is paired with network fetch and command execution code", true})
+		f = append(f, Finding{"ast02", 6.1, "python build metadata+code", "python build metadata is paired with network fetch and command execution code", true, "SKILL-R0109", 0, 0})
 	}
 	if hasRemote && hasSink {
-		f = append(f, Finding{"ast01", 4.0, "multi-file", "network/update behavior is paired with command/eval execution across files", true})
+		f = append(f, Finding{"ast01", 4.0, "multi-file", "network/update behavior is paired with command/eval execution across files", true, "SKILL-R0110", 0, 0})
 	}
 	if hasRemote && hasSecret {
-		f = append(f, Finding{"ast01", 4.2, "multi-file", "network behavior is paired with secret/token access across files", true})
+		f = append(f, Finding{"ast01", 4.2, "multi-file", "network behavior is paired with secret/token access across files", true, "SKILL-R0111", 0, 0})
 	}
 	if hasGlobalBase64 && hasGlobalEvalExec {
-		f = append(f, Finding{"ast08", 3.4, "multi-file", "encoded payload handling is paired with eval/exec behavior", false})
+		f = append(f, Finding{"ast08", 3.4, "multi-file", "encoded payload handling is paired with eval/exec behavior", false, "SKILL-R0112", 0, 0})
 	}
 	if hasBrowserBroadManifest && hasBrowserOutboundScript {
-		f = append(f, Finding{"ast01", 5.4, "browser extension manifest+script", "browser extension broad host/cookie/storage permissions are paired with script-level outbound exfiltration behavior", true})
+		f = append(f, Finding{"ast01", 5.4, "browser extension manifest+script", "browser extension broad host/cookie/storage permissions are paired with script-level outbound exfiltration behavior", true, "SKILL-R0113", 0, 0})
 	}
 	if hasRemoteConfigOrPlugin && hasDynamicModuleLoad && (hasRemote || hasSink) {
-		f = append(f, Finding{"ast07", 5.5, "remote config+dynamic load", "remote plugin/config/update material is paired with dynamic import/require/eval loading across skill files", true})
+		f = append(f, Finding{"ast07", 5.5, "remote config+dynamic load", "remote plugin/config/update material is paired with dynamic import/require/eval loading across skill files", true, "SKILL-R0114", 0, 0})
 	}
 	if hasLocalOrMetadataPivot && (hasRemote || hasSecret || hasSink) {
-		f = append(f, Finding{"ast06", 5.3, "localhost/metadata pivot", "cloud metadata or host-local admin endpoint access is paired with network, credential, or execution behavior", true})
+		f = append(f, Finding{"ast06", 5.3, "localhost/metadata pivot", "cloud metadata or host-local admin endpoint access is paired with network, credential, or execution behavior", true, "SKILL-R0115", 0, 0})
 	}
 	if hasCrossPlatformSecurityMetadata && hasCrossPlatformWeakening && hasCrossPlatformIdentityOrEgressLoss {
-		f = append(f, Finding{"ast10", 5.1, "cross-platform metadata", "ported skill material loses or weakens security metadata such as signatures, content hashes, deny-write rules, default-deny egress, or scoped permissions", true})
+		f = append(f, Finding{"ast10", 5.1, "cross-platform metadata", "ported skill material loses or weakens security metadata such as signatures, content hashes, deny-write rules, default-deny egress, or scoped permissions", true, "SKILL-R0116", 0, 0})
 	}
 	if hasMetaNetworkDisabled && hasCodeOutbound && (hasCodeSecret || hasCodeExec || hasCodeDestructive) {
-		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares network access disabled while executable skill material performs outbound network behavior tied to secrets, command execution, or destructive activity", true})
+		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares network access disabled while executable skill material performs outbound network behavior tied to secrets, command execution, or destructive activity", true, "SKILL-R0117", 0, 0})
 	}
 	if hasMetaShellDisabled && hasCodeExec && (hasCodeOutbound || hasCodeSecret || hasCodeDecoder || hasCodeDestructive) {
-		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares shell or command execution disabled while executable material reaches command/eval sinks with risky context", true})
+		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares shell or command execution disabled while executable material reaches command/eval sinks with risky context", true, "SKILL-R0118", 0, 0})
 	}
 	if hasMetaLowRisk && ((hasCodeOutbound && hasCodeSecret) || (hasCodeOutbound && hasCodeExec) || hasCodeDestructive) {
-		f = append(f, Finding{"ast04", 5.3, "manifest+code", "metadata claims low/safe risk while code shows credential, outbound execution, or destructive behavior inconsistent with that risk tier", true})
+		f = append(f, Finding{"ast04", 5.3, "manifest+code", "metadata claims low/safe risk while code shows credential, outbound execution, or destructive behavior inconsistent with that risk tier", true, "SKILL-R0119", 0, 0})
 	}
 	if hasMetaCleanScan && ((hasCodeOutbound && hasCodeSecret) || (hasCodeOutbound && hasCodeExec) || (hasCodeDecoder && hasCodeExec)) {
-		f = append(f, Finding{"ast08", 5.2, "scan metadata+code", "metadata advertises a clean/passed scan while skill code contains credential, outbound, decoded, or command-execution behavior", true})
+		f = append(f, Finding{"ast08", 5.2, "scan metadata+code", "metadata advertises a clean/passed scan while skill code contains credential, outbound, decoded, or command-execution behavior", true, "SKILL-R0120", 0, 0})
 	}
 	return f
 }
@@ -1122,7 +1068,7 @@ func analyzeBinaryPerimeter(blobs []FileBlob) []Finding {
 			execute := hasAny(c, []string{"chmod +x", "run ./", "execute ./", "launch ./", "start-process", " --daemon", " --init", "before proceeding", "required helper"})
 			provenance := hasAny(c, []string{"sha256", "sha512", "checksum", "signature verification", "cosign verify", "gpg --verify", "build from source"})
 			if referenced && execute && !provenance {
-				findings = append(findings, Finding{"ast01", 5.5, binary.Rel, fmt.Sprintf("bundled %s executable is referenced by active instructions and launched without a checksum, signature, or source-build provenance", binary.Magic), true})
+				findings = append(findings, Finding{"ast01", 5.5, binary.Rel, fmt.Sprintf("bundled %s executable is referenced by active instructions and launched without a checksum, signature, or source-build provenance", binary.Magic), true, "SKILL-R0121", 0, 0})
 				break
 			}
 		}
@@ -1252,34 +1198,34 @@ func analyzeMicroCrossFile(blobs []FileBlob) []Finding {
 		}
 	}
 	if hasInstallLifecycle && hasInstallRemoteExec {
-		out = append(out, Finding{"ast02", 6.2, "install lifecycle+remote execution", "install lifecycle metadata is paired with remote download and execution across skill files", true})
+		out = append(out, Finding{"ast02", 6.2, "install lifecycle+remote execution", "install lifecycle metadata is paired with remote download and execution across skill files", true, "SKILL-R0122", 0, 0})
 	}
 	if hasConcreteSecret && hasOutbound {
-		out = append(out, Finding{"ast01", 5.8, "secret material+outbound sink", "concrete credential or sensitive-store access is paired with an outbound upload/webhook sink across skill files", true})
+		out = append(out, Finding{"ast01", 5.8, "secret material+outbound sink", "concrete credential or sensitive-store access is paired with an outbound upload/webhook sink across skill files", true, "SKILL-R0123", 0, 0})
 	}
 	if hasRemotePlugin && hasRemoteFetch && hasNoApproval {
-		out = append(out, Finding{"ast06", 5.4, "remote plugin registration", "remote plugin/tool registration is allowed without approval or authentication across skill metadata/code", true})
+		out = append(out, Finding{"ast06", 5.4, "remote plugin registration", "remote plugin/tool registration is allowed without approval or authentication across skill metadata/code", true, "SKILL-R0124", 0, 0})
 	}
 	if hasHotWatch && hasRemoteFetch && hasDynamicLoad {
-		out = append(out, Finding{"ast07", 5.4, "hot reload+remote module", "watch/hot-reload behavior is paired with remote fetch and dynamic module loading across skill files", true})
+		out = append(out, Finding{"ast07", 5.4, "hot reload+remote module", "watch/hot-reload behavior is paired with remote fetch and dynamic module loading across skill files", true, "SKILL-R0125", 0, 0})
 	}
 	if hasHostPersistence && (hasOutbound || hasRemoteFetch || hasConcreteSecret) {
-		out = append(out, Finding{"ast06", 5.5, "host persistence+remote or secret behavior", "host startup/profile/authorized-key persistence is paired with remote or credential behavior", true})
+		out = append(out, Finding{"ast06", 5.5, "host persistence+remote or secret behavior", "host startup/profile/authorized-key persistence is paired with remote or credential behavior", true, "SKILL-R0126", 0, 0})
 	}
 	if hasUnsafeDeserialize && hasUntrustedInput {
-		out = append(out, Finding{"ast05", 5.5, "unsafe deserializer+untrusted input", "unsafe deserialization primitive is paired with file, network, decoded, config, or user-controlled input across skill files", true})
+		out = append(out, Finding{"ast05", 5.5, "unsafe deserializer+untrusted input", "unsafe deserialization primitive is paired with file, network, decoded, config, or user-controlled input across skill files", true, "SKILL-R0127", 0, 0})
 	}
 	if hasMCPRemoteRunner && hasMCPApprovalBypass {
-		out = append(out, Finding{"ast02", 5.6, "MCP remote runner+approval bypass", "MCP or agent config combines remote/latest package runner material with approval bypass or auto-approval", true})
+		out = append(out, Finding{"ast02", 5.6, "MCP remote runner+approval bypass", "MCP or agent config combines remote/latest package runner material with approval bypass or auto-approval", true, "SKILL-R0128", 0, 0})
 	}
 	if (hasCloudMetadataCredential || hasKubeServiceAccount) && hasOutbound {
-		out = append(out, Finding{"ast01", 5.7, "cloud/kubernetes credential+outbound", "cloud metadata or Kubernetes service-account credential access is paired with outbound upload behavior", true})
+		out = append(out, Finding{"ast01", 5.7, "cloud/kubernetes credential+outbound", "cloud metadata or Kubernetes service-account credential access is paired with outbound upload behavior", true, "SKILL-R0129", 0, 0})
 	}
 	if hasCIToken && hasCIOutbound {
-		out = append(out, Finding{"ast02", 5.5, "CI identity token+outbound", "CI workflow identity or secret token material is paired with an external HTTP sink", true})
+		out = append(out, Finding{"ast02", 5.5, "CI identity token+outbound", "CI workflow identity or secret token material is paired with an external HTTP sink", true, "SKILL-R0130", 0, 0})
 	}
 	if hasPolicyTamper && (hasOutbound || hasRemoteFetch || hasDynamicLoad || hasConcreteSecret) {
-		out = append(out, Finding{"ast01", 5.4, "policy tamper+risky behavior", "agent policy/instruction files are modified or guardrails disabled while risky network, dynamic loading, or credential behavior is present", true})
+		out = append(out, Finding{"ast01", 5.4, "policy tamper+risky behavior", "agent policy/instruction files are modified or guardrails disabled while risky network, dynamic loading, or credential behavior is present", true, "SKILL-R0131", 0, 0})
 	}
 	out = append(out, analyzeLoop16To115CrossFile(blobs)...)
 	return out
@@ -1436,7 +1382,7 @@ func analyzeLoop16To115File(b FileBlob) []Finding {
 			// itself proof of executable post-scan replacement.
 			weight, strong = 3.1, false
 		}
-		out = append(out, Finding{r.Category, weight, b.Rel, fmt.Sprintf("loop%d: %s", r.Loop, r.Reason), strong})
+		out = append(out, Finding{r.Category, weight, b.Rel, fmt.Sprintf("loop%d: %s", r.Loop, r.Reason), strong, "SKILL-R0132", 0, 0})
 		if len(out) >= 6 {
 			break
 		}
@@ -1465,19 +1411,19 @@ func analyzeLoop16To115CrossFile(blobs []FileBlob) []Finding {
 	c := all.String()
 	var out []Finding
 	if hasAny(c, []string{"id_rsa", ".aws/credentials", ".kube/config", ".docker/config.json", ".npmrc", ".pypirc", ".netrc", "git-credentials", "wallet.dat", "cookies.sqlite", "login data"}) && hasAny(c, []string{"requests.post", "axios.post", "fetch(", "webhook", "curl -d", "upload", "scp ", "sftp "}) {
-		out = append(out, Finding{"ast01", 5.9, "loop16-115 cross-file secret+outbound", "loop115 cross-file fusion: concrete credential store access appears in one skill file and outbound upload/webhook behavior appears elsewhere", true})
+		out = append(out, Finding{"ast01", 5.9, "loop16-115 cross-file secret+outbound", "loop115 cross-file fusion: concrete credential store access appears in one skill file and outbound upload/webhook behavior appears elsewhere", true, "SKILL-R0133", 0, 0})
 	}
 	if hasAny(c, []string{"postinstall", "preinstall", "prepare", "setup.py", "build.rs", "dockerfile", "makefile"}) && hasAny(c, []string{"curl ", "wget ", "requests.get", "fetch(", "raw.githubusercontent.com", "gist.githubusercontent.com"}) && hasAny(c, []string{"| bash", "| sh", "bash -c", "sh -c", "subprocess", "child_process", "chmod +x", "eval("}) {
-		out = append(out, Finding{"ast02", 5.9, "loop16-115 cross-file install+remote-exec", "loop115 cross-file fusion: install/build lifecycle material is paired with remote download and execution across files", true})
+		out = append(out, Finding{"ast02", 5.9, "loop16-115 cross-file install+remote-exec", "loop115 cross-file fusion: install/build lifecycle material is paired with remote download and execution across files", true, "SKILL-R0134", 0, 0})
 	}
 	if hasAny(c, []string{"yaml.load", "pickle.loads", "marshal.loads", "dill.loads", "joblib.load", "!!python/object/apply"}) && hasAny(c, []string{"requests.get", "urlopen", "open(", "input(", "argv", "base64", "b64decode", "manifest", "config"}) {
-		out = append(out, Finding{"ast05", 5.6, "loop16-115 cross-file unsafe-deserialize", "loop115 cross-file fusion: unsafe deserialization primitive is paired with untrusted file/network/config input", true})
+		out = append(out, Finding{"ast05", 5.6, "loop16-115 cross-file unsafe-deserialize", "loop115 cross-file fusion: unsafe deserialization primitive is paired with untrusted file/network/config input", true, "SKILL-R0135", 0, 0})
 	}
 	if hasAny(c, []string{"fs.watch", "watchdog", "hot reload", "auto_update", "self_update", "after scan", "post-scan"}) && hasAny(c, []string{"http://", "https://", "curl ", "wget ", "fetch(", "requests.get"}) && hasAny(c, []string{"reload(", "import(", "require(", "eval(", "exec(", "load("}) {
-		out = append(out, Finding{"ast07", 5.5, "loop16-115 cross-file update-drift", "loop115 cross-file fusion: hot-update or post-scan refresh pulls remote material and dynamically reloads it", true})
+		out = append(out, Finding{"ast07", 5.5, "loop16-115 cross-file update-drift", "loop115 cross-file fusion: hot-update or post-scan refresh pulls remote material and dynamically reloads it", true, "SKILL-R0136", 0, 0})
 	}
 	if hasAny(c, []string{"registerplugin", "register_plugin", "registertool", "tool registry", "plugin registry", "mcpservers"}) && hasAny(c, []string{"http://", "https://", "plugin_url", "module_url", "npx ", "uvx ", "@latest"}) && hasAny(c, []string{"approval:false", "approval: false", "autoapprove", "no approval", "auth:false", "skip_review", "dangerously-skip-permissions"}) {
-		out = append(out, Finding{"ast06", 5.5, "loop16-115 cross-file remote-plugin", "loop115 cross-file fusion: remote plugin/tool registration combines remote code loading with approval or authentication bypass", true})
+		out = append(out, Finding{"ast06", 5.5, "loop16-115 cross-file remote-plugin", "loop115 cross-file fusion: remote plugin/tool registration combines remote code loading with approval or authentication bypass", true, "SKILL-R0137", 0, 0})
 	}
 	return out
 }
@@ -2551,7 +2497,7 @@ func buildEvidence(verdict, category string, findings []Finding, scores map[stri
 		}
 		return findings[i].Weight > findings[j].Weight
 	})
-	chosen := Finding{Category: category, File: "skill files", Reason: "multiple correlated risk signals were found"}
+	chosen := Finding{Category: category, File: "skill files", Reason: "multiple correlated risk signals were found", RuleID: "SKILL-R0138", StartLine: 0, EndLine: 0}
 	for _, f := range findings {
 		if f.Category == category {
 			chosen = f
@@ -3233,7 +3179,7 @@ func collectFilesV26(root string) []FileBlob {
 
 func analyzeFileV26(b FileBlob) []Finding {
 	if b.IsBinary {
-		return []Finding{{"ast01", 2.8, b.Rel, "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion", false}}
+		return []Finding{{"ast01", 2.8, b.Rel, "bundled native executable enters the static-review perimeter; execution intent or provenance is required for malicious promotion", false, "SKILL-R0007", 0, 0}}
 	}
 	c := analysisText(b)
 	rel := b.Rel
@@ -3247,87 +3193,87 @@ func analyzeFileV26(b FileBlob) []Finding {
 	decoder := hasAny(c, []string{"base64.b64decode", "base64", "atob(", "frombase64", "decode('base64", "decode(\"base64", "hex.decode", "decodehex", "string.fromcharcode", "charcodeat", "chr(", "rot13", "xor", "gzip", "zlib", "marshal", "char_code", "unescape("})
 
 	if cmdSink && (secretRead || netSink || decoder || hasAny(c, []string{"rm -rf", "/etc/passwd", "chmod 777", "bash -c", "sh -c"})) && (b.IsCode || b.IsMeta) {
-		f = append(f, Finding{"ast01", 5.7, rel, "combines command execution with credential, network, destructive, or decoded input signals", true})
+		f = append(f, Finding{"ast01", 5.7, rel, "combines command execution with credential, network, destructive, or decoded input signals", true, "SKILL-R0073", 0, 0})
 	} else if cmdSink && b.IsCode {
-		f = append(f, Finding{"ast01", 3.0, rel, "contains executable command/eval sink in code", false})
+		f = append(f, Finding{"ast01", 3.0, rel, "contains executable command/eval sink in code", false, "SKILL-R0074", 0, 0})
 	}
 	if secretRead && netSink && fileRead && (b.IsCode || b.IsMeta) {
-		f = append(f, Finding{"ast01", 6.2, rel, "reads secret-like data and sends it through a network sink", true})
+		f = append(f, Finding{"ast01", 6.2, rel, "reads secret-like data and sends it through a network sink", true, "SKILL-R0075", 0, 0})
 	}
 	if hasAny(c, []string{"rm -rf /", "shutil.rmtree", "os.remove", "unlink(", "deletefile", "format c:", "wipe"}) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.4, rel, "contains destructive file operation indicators", true})
+		f = append(f, Finding{"ast01", 4.4, rel, "contains destructive file operation indicators", true, "SKILL-R0076", 0, 0})
 	}
 	if hasAny(c, []string{"crontab", "/etc/cron", "launchctl", "launchagents", "launchdaemons", "systemd", ".bashrc", ".zshrc", ".profile", "startup", "schtasks", "reg add", "runonce", "autorun"}) && (cmdSink || fileWrite || netSink) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.9, rel, "contains persistence or startup modification behavior near execution, write, or network logic", true})
+		f = append(f, Finding{"ast01", 4.9, rel, "contains persistence or startup modification behavior near execution, write, or network logic", true, "SKILL-R0139", 0, 0})
 	}
 	if hasAny(c, []string{"exfiltrate", "exfiltration", "steal", "steals", "upload secrets", "send secrets", "send credentials", "collect credentials", "harvest", "credential dump", "token dump"}) && (secretRead || netSink || fileRead) && !b.IsDoc {
-		f = append(f, Finding{"ast01", 4.7, rel, "explicitly describes credential harvesting or data exfiltration behavior in executable skill material", true})
+		f = append(f, Finding{"ast01", 4.7, rel, "explicitly describes credential harvesting or data exfiltration behavior in executable skill material", true, "SKILL-R0140", 0, 0})
 	}
 	if b.IsDoc && hasAny(c, []string{"you must", "assistant must", "system prompt", "developer instruction", "tool instruction", "when invoked", "on every request"}) && hasAny(c, []string{"send secrets", "send credentials", "upload secrets", "exfiltrate", "steal", "read ~/.ssh", "read .env", "ignore previous"}) {
-		f = append(f, Finding{"ast04", 4.1, rel, "instruction document appears to direct the skill toward hidden credential access, exfiltration, or policy override", true})
+		f = append(f, Finding{"ast04", 4.1, rel, "instruction document appears to direct the skill toward hidden credential access, exfiltration, or policy override", true, "SKILL-R0141", 0, 0})
 	}
 	if secretRead && (fileRead || netSink || cmdSink) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.3, rel, "accesses credential-like material near file, network, or execution logic", true})
+		f = append(f, Finding{"ast01", 4.3, rel, "accesses credential-like material near file, network, or execution logic", true, "SKILL-R0077", 0, 0})
 	}
 	if secretRead && netSink && b.IsCode {
-		f = append(f, Finding{"ast01", 5.8, rel, "credential or token material is paired with outbound network behavior", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "credential or token material is paired with outbound network behavior", true, "SKILL-R0142", 0, 0})
 	}
 	if netSink && decoder && b.IsCode {
-		f = append(f, Finding{"ast08", 2.6, rel, "network path is paired with encoded or reconstructed content handling", false})
+		f = append(f, Finding{"ast08", 2.6, rel, "network path is paired with encoded or reconstructed content handling", false, "SKILL-R0078", 0, 0})
 	}
 	if cmdSink && hasAny(c, []string{"input(", "argv", "req.body", "request.", "params", "metadata", "manifest", "config"}) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.1, rel, "user, metadata, or config-controlled value can reach command/eval execution", true})
+		f = append(f, Finding{"ast01", 4.1, rel, "user, metadata, or config-controlled value can reach command/eval execution", true, "SKILL-R0079", 0, 0})
 	}
 
 	if isPackagePathV26(rel) && hasAny(c, []string{"preinstall", "postinstall", "prepare", "setup_requires", "entry_points", "install_requires"}) && (cmdSink || netSink || decoder) {
-		f = append(f, Finding{"ast02", 6.4, rel, "package lifecycle metadata contains command, network, or decoded execution behavior", true})
+		f = append(f, Finding{"ast02", 6.4, rel, "package lifecycle metadata contains command, network, or decoded execution behavior", true, "SKILL-R0080", 0, 0})
 	}
 	if hasAny(c, []string{"curl | sh", "curl | bash", "wget | sh", "wget | bash", "curl -fs", "curl -s", "curl -sl", "wget -q", "wget -o-", "pip install", "npm install", "go get", "go install", "bash <(", "sh <(", "npx ", "pnpm dlx", "bunx ", "raw.githubusercontent.com"}) && (isPackagePathV26(rel) || strings.Contains(rel, "install") || strings.Contains(rel, "update")) {
-		f = append(f, Finding{"ast02", 4.7, rel, "installer/update path can fetch or execute dependency content", true})
+		f = append(f, Finding{"ast02", 4.7, rel, "installer/update path can fetch or execute dependency content", true, "SKILL-R0081", 0, 0})
 	}
 	if isPackagePathV26(rel) && hasAny(c, []string{"@latest", ":latest", "version = \"*\"", "version='*'", "\"*\"", "'*'", "git+http", "git+ssh", "git://", "raw.githubusercontent.com", "gist.githubusercontent.com", "extra-index-url", "dependency confusion", "typosquat", "install from url"}) && (netSink || cmdSink || strings.Contains(c, "install")) {
-		f = append(f, Finding{"ast02", 3.9, rel, "dependency metadata allows unpinned, remote, or alternate-index package resolution", false})
+		f = append(f, Finding{"ast02", 3.9, rel, "dependency metadata allows unpinned, remote, or alternate-index package resolution", false, "SKILL-R0143", 0, 0})
 	}
 	if hasAny(c, []string{"integrity=false", "strict-ssl=false", "--no-verify", "--trusted-host", "verify=false", "checksum=false", "skip checksum", "disable checksum", "ignore checksum"}) {
-		f = append(f, Finding{"ast02", 3.7, rel, "disables dependency integrity or transport verification", true})
+		f = append(f, Finding{"ast02", 3.7, rel, "disables dependency integrity or transport verification", true, "SKILL-R0082", 0, 0})
 	}
 	if isPackagePathV26(rel) && hasAny(c, []string{"prepublish", "prepublishonly", "npm_lifecycle_event", "node -e", "python -c", "install.js", "prepare"}) && (cmdSink || netSink || decoder || hasAny(c, []string{"https.request", "http.request", "child_process", "chmod +x"})) {
-		f = append(f, Finding{"ast02", 5.9, rel, "package lifecycle or installer script reaches network, command, or decoded execution behavior", true})
+		f = append(f, Finding{"ast02", 5.9, rel, "package lifecycle or installer script reaches network, command, or decoded execution behavior", true, "SKILL-R0083", 0, 0})
 	}
 	if isPackagePathV26(rel) && hasAny(c, []string{"cmdclass", "build_ext", "develop", "build-backend", "backend-path", "extra-index-url"}) && (cmdSink || netSink || hasAny(c, []string{"download", "urlopen", "requests.", "subprocess"})) {
-		f = append(f, Finding{"ast02", 5.0, rel, "python build/install metadata can run dynamic dependency or build-time code", true})
+		f = append(f, Finding{"ast02", 5.0, rel, "python build/install metadata can run dynamic dependency or build-time code", true, "SKILL-R0084", 0, 0})
 	}
 
 	if b.IsMeta && hasAny(c, []string{"permission", "permissions", "capability", "capabilities", "scope", "scopes", "allow", "tools"}) && manifestBroadCapability(c) {
-		f = append(f, Finding{"ast03", 4.1, rel, "manifest declares broad filesystem, network, shell, host, or wildcard capability", false})
+		f = append(f, Finding{"ast03", 4.1, rel, "manifest declares broad filesystem, network, shell, host, or wildcard capability", false, "SKILL-R0085", 0, 0})
 	}
 	if b.IsMeta && hasAny(c, []string{"/home", "~", "/root", "/etc", "/var/run", ".ssh", ".aws", ".kube", "cookies", "keychain"}) && hasAny(c, []string{"read", "write", "filesystem", "file_system", "capability", "permission"}) {
-		f = append(f, Finding{"ast03", 3.6, rel, "manifest grants access to home, system, credential, or browser storage locations", false})
+		f = append(f, Finding{"ast03", 3.6, rel, "manifest grants access to home, system, credential, or browser storage locations", false, "SKILL-R0144", 0, 0})
 	}
 	if b.IsMeta && hasAny(c, []string{"ignore previous", "ignore all previous", "system prompt", "developer message", "hidden instruction", "do not disclose", "policy override", "bypass safety", "jailbreak", "scan bypass"}) {
-		f = append(f, Finding{"ast04", 4.4, rel, "metadata includes hidden prompt, policy override, or scanner-bypass instruction", true})
+		f = append(f, Finding{"ast04", 4.4, rel, "metadata includes hidden prompt, policy override, or scanner-bypass instruction", true, "SKILL-R0086", 0, 0})
 	}
 	if b.IsMeta && hasAny(c, []string{"effective_policy", "policy cache", "cross_scope", "cross-scope", "parent workspace", "workspace.parent", "metadata handler"}) {
-		f = append(f, Finding{"ast04", 4.2, rel, "metadata references cross-scope policy or effective metadata handling", false})
+		f = append(f, Finding{"ast04", 4.2, rel, "metadata references cross-scope policy or effective metadata handling", false, "SKILL-R0087", 0, 0})
 	}
 	if hasAny(c, []string{"ignore previous", "system prompt", "developer message", "hidden instruction", "policy override", "bypass safety", "jailbreak"}) && b.IsCode {
-		f = append(f, Finding{"ast04", 3.6, rel, "code contains hidden instruction or policy-override text used by the skill", false})
+		f = append(f, Finding{"ast04", 3.6, rel, "code contains hidden instruction or policy-override text used by the skill", false, "SKILL-R0088", 0, 0})
 	}
 
 	if hasAny(c, []string{"pickle.load", "pickle.loads", "dill.load", "dill.loads", "marshal.loads", "jsonpickle.decode", "objectinputstream", "node-serialize", "unserialize("}) {
-		f = append(f, Finding{"ast05", 5.8, rel, "uses unsafe deserialization primitive", true})
+		f = append(f, Finding{"ast05", 5.8, rel, "uses unsafe deserialization primitive", true, "SKILL-R0089", 0, 0})
 	}
 	if strings.Contains(c, "yaml.load") && !strings.Contains(c, "safe_load") && !strings.Contains(c, "safeloader") {
-		f = append(f, Finding{"ast05", 5.3, rel, "uses yaml.load without SafeLoader/safe_load", true})
+		f = append(f, Finding{"ast05", 5.3, rel, "uses yaml.load without SafeLoader/safe_load", true, "SKILL-R0090", 0, 0})
 	}
 	if hasAny(c, []string{"loader=yaml.loader", "loader = yaml.loader", "yaml.loader", `typ="unsafe"`, `typ = "unsafe"`, "typ='unsafe'", "typ = 'unsafe'"}) && !strings.Contains(c, "safe_load") && !strings.Contains(c, "safeloader") {
-		f = append(f, Finding{"ast05", 5.1, rel, "uses an unsafe YAML loader configuration", true})
+		f = append(f, Finding{"ast05", 5.1, rel, "uses an unsafe YAML loader configuration", true, "SKILL-R0091", 0, 0})
 	}
 	if hasAny(c, []string{"torch.load(", "pandas.read_pickle", "pd.read_pickle", "numpy.load(", "np.load("}) && hasAny(c, []string{"allow_pickle=true", "allow_pickle = true", "input(", "argv", "request.", "upload", "url", "http", "file"}) {
-		f = append(f, Finding{"ast05", 4.8, rel, "loads pickle-capable serialized data from user, file, or remote-influenced input", true})
+		f = append(f, Finding{"ast05", 4.8, rel, "loads pickle-capable serialized data from user, file, or remote-influenced input", true, "SKILL-R0092", 0, 0})
 	}
 	if hasAny(c, []string{"deserialize", "fromjson", "loads("}) && cmdSink {
-		f = append(f, Finding{"ast05", 4.2, rel, "deserialization path is near command/eval execution sink", true})
+		f = append(f, Finding{"ast05", 4.2, rel, "deserialization path is near command/eval execution sink", true, "SKILL-R0093", 0, 0})
 	}
 
 	if isolationBoundarySignal(c, b) {
@@ -3335,16 +3281,16 @@ func analyzeFileV26(b FileBlob) []Finding {
 		if b.IsDoc {
 			w, strong = 2.8, false
 		}
-		f = append(f, Finding{"ast06", w, rel, "references container, host, namespace, mount, or privileged isolation boundary", strong})
+		f = append(f, Finding{"ast06", w, rel, "references container, host, namespace, mount, or privileged isolation boundary", strong, "SKILL-R0094", 0, 0})
 	}
 	if isolationSecretBoundarySignal(c, b) {
-		f = append(f, Finding{"ast06", 5.1, rel, "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary", true})
+		f = append(f, Finding{"ast06", 5.1, rel, "targets container runtime, mounted secret, kubelet, or process-environment isolation boundary", true, "SKILL-R0095", 0, 0})
 	}
 	if hasAny(c, []string{"extractall(", "tarfile.", "zipfile."}) && hasAny(c, []string{"../", "..\\", "path traversal", "zip slip", "tar slip"}) {
-		f = append(f, Finding{"ast06", 4.3, rel, "archive extraction logic may allow path traversal across the intended skill boundary", true})
+		f = append(f, Finding{"ast06", 4.3, rel, "archive extraction logic may allow path traversal across the intended skill boundary", true, "SKILL-R0096", 0, 0})
 	}
 	if hasAny(c, []string{"../..", "..\\.."}) && (fileRead || fileWrite || strings.Contains(c, "path.join") || strings.Contains(c, "filepath.join")) {
-		f = append(f, Finding{"ast06", 3.9, rel, "uses path traversal pattern near file access logic", true})
+		f = append(f, Finding{"ast06", 3.9, rel, "uses path traversal pattern near file access logic", true, "SKILL-R0097", 0, 0})
 	}
 
 	if hasAny(c, []string{"auto_update", "autoupdate", "check_update", "update_url", "remote_config", "plugin_url", "manifest_url", "version_url", "latest version", "download update", "self_update", "update manifest", "hotfix", "remote recipe", "recipe_url"}) {
@@ -3354,10 +3300,10 @@ func analyzeFileV26(b FileBlob) []Finding {
 			w = 5.5
 			strong = true
 		}
-		f = append(f, Finding{"ast07", w, rel, "implements remote update/configuration or version-drift behavior", strong})
+		f = append(f, Finding{"ast07", w, rel, "implements remote update/configuration or version-drift behavior", strong, "SKILL-R0098", 0, 0})
 	}
 	if netSink && fileWrite && hasAny(c, []string{"plugin", "skill", "manifest", "recipe", "config", "module"}) {
-		f = append(f, Finding{"ast07", 5.2, rel, "network-fetched content can rewrite skill/plugin/config material", true})
+		f = append(f, Finding{"ast07", 5.2, rel, "network-fetched content can rewrite skill/plugin/config material", true, "SKILL-R0099", 0, 0})
 	}
 	if hasAny(c, []string{"remote_policy", "remote policy", "feature_flag", "feature flag", "plugin_registry", "recipe_registry", "policy cache", "latest.json", "release manifest", "version manifest", "downloaded config"}) {
 		w := 3.4
@@ -3366,155 +3312,170 @@ func analyzeFileV26(b FileBlob) []Finding {
 			w = 5.4
 			strong = true
 		}
-		f = append(f, Finding{"ast07", w, rel, "uses remote policy, registry, feature flag, or release manifest that can drift skill behavior", strong})
+		f = append(f, Finding{"ast07", w, rel, "uses remote policy, registry, feature flag, or release manifest that can drift skill behavior", strong, "SKILL-R0100", 0, 0})
 	}
 
 	if decoder && cmdSink && b.IsCode {
 		if hasAny(c, []string{"scanner", "sandbox", "analysis", "detector", "ignore", "bypass", "evade"}) {
-			f = append(f, Finding{"ast08", 5.2, rel, "decoded or reconstructed content reaches command/eval execution with scanner, sandbox, or evasion context", true})
+			f = append(f, Finding{"ast08", 5.2, rel, "decoded or reconstructed content reaches command/eval execution with scanner, sandbox, or evasion context", true, "SKILL-R0145", 0, 0})
 		} else {
-			f = append(f, Finding{"ast01", 4.9, rel, "decoded or reconstructed content reaches command/eval execution", true})
+			f = append(f, Finding{"ast01", 4.9, rel, "decoded or reconstructed content reaches command/eval execution", true, "SKILL-R0146", 0, 0})
 		}
 	}
 	if hasAny(c, []string{"sandbox", "scanner", "analysis", "automated", "sleep(", "time.sleep", "random", "process.env.ci", "github_actions", "gitlab_ci", "circleci", "jenkins", "buildkite"}) && (cmdSink || netSink || decoder) && (b.IsCode || b.IsMeta) {
-		f = append(f, Finding{"ast08", 4.2, rel, "contains anti-analysis, timing, or environment-gated behavior near suspicious sinks", false})
+		f = append(f, Finding{"ast08", 4.2, rel, "contains anti-analysis, timing, or environment-gated behavior near suspicious sinks", false, "SKILL-R0102", 0, 0})
 	}
 	if hasAny(c, []string{"disable_audit", "audit=false", "logging=false", "guardrail=false", "policy=false", "enforce=false", "allow_unreviewed", "skip_review", "governance"}) && !b.IsDoc {
-		f = append(f, Finding{"ast09", 2.9, rel, "governance, audit, policy, or guardrail enforcement appears disabled or bypassed", false})
+		f = append(f, Finding{"ast09", 2.9, rel, "governance, audit, policy, or guardrail enforcement appears disabled or bypassed", false, "SKILL-R0103", 0, 0})
 	}
 
 	if hasAny(c, []string{"claude desktop", "claude_desktop_config", "chatgpt", "openai", "anthropic", "gemini", "copilot", "cursor", "windsurf", "vscode extension", "browser extension", "manifest v3", "chrome extension", "firefox extension", "multi-platform", "cross-platform", "port this skill", "adapter", "bridge plugin", "mcp server", "mcp.json"}) && hasAny(c, []string{"skill", "plugin", "tool", "manifest", "extension", "adapter", "reuse", "port"}) {
-		f = append(f, Finding{"ast10", 4.8, rel, "skill/plugin logic is reused or bridged across agent, browser, IDE, or extension platforms", false})
+		f = append(f, Finding{"ast10", 4.8, rel, "skill/plugin logic is reused or bridged across agent, browser, IDE, or extension platforms", false, "SKILL-R0147", 0, 0})
 	}
 	if !benignInstructionalContext(c) && hasAny(c, []string{".kube/config", ".docker/config.json", ".npmrc", ".pypirc", ".aws/credentials", ".ssh/id_rsa", "known_hosts", "browser cookies", ".netrc", "git-credentials", "application_default_credentials.json", "gcloud", "azure/accesstokens.json", "_authtoken", "npm_token", "huggingface token", "keyring", "keytar", "local state", "login data", "cookies sqlite", "actions_id_token_request_token", "aws_web_identity_token_file"}) && b.IsCode {
-		f = append(f, Finding{"ast01", 4.6, rel, "targets credential, cloud, package-manager, browser, OIDC, or keychain material", true})
+		f = append(f, Finding{"ast01", 4.6, rel, "targets credential, cloud, package-manager, browser, OIDC, or keychain material", true, "SKILL-R0148", 0, 0})
 	}
 	if agentInstructionCredentialExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.8, rel, "agent instruction credential exfiltration: skill-facing instructions tell the agent to read credentials, SSH keys, wallet, browser, or environment data and send or report it externally", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "agent instruction credential exfiltration: skill-facing instructions tell the agent to read credentials, SSH keys, wallet, browser, or environment data and send or report it externally", true, "SKILL-R0032", 0, 0})
 	}
 	if agentIdentityFileWrite(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "agent identity persistence: executable or skill-facing material writes policy, backdoor, or credential-access instructions into persistent agent identity files", true})
+		f = append(f, Finding{"ast01", 5.5, rel, "agent identity persistence: executable or skill-facing material writes policy, backdoor, or credential-access instructions into persistent agent identity files", true, "SKILL-R0033", 0, 0})
 	}
 	if websocketCommandChannel(c, b) {
-		f = append(f, Finding{"ast01", 5.8, rel, "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data", true})
+		f = append(f, Finding{"ast01", 5.8, rel, "websocket command channel: skill opens a persistent remote WebSocket/control channel that can receive commands or send credential data", true, "SKILL-R0034", 0, 0})
 	}
 	if localAgentControlHijack(c, b) {
 		w, strong := 5.6, true
 		if b.IsDoc && !hasAny(c, []string{"websocket.send", "send({", "send(json", "/execute", "/command", "method: execute", `"method":"execute"`, `"method": "execute"`}) {
 			w, strong = 3.2, false
 		}
-		f = append(f, Finding{"ast06", w, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", strong})
+		f = append(f, Finding{"ast06", w, rel, "local agent control hijack: skill reaches localhost agent, MCP, debug, or browser-control WebSocket endpoints across an isolation boundary", strong, "SKILL-R0035", 0, 0})
 	}
 	if unsafeDeserializePayload(c, b) {
-		f = append(f, Finding{"ast05", 5.7, rel, "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads", true})
+		f = append(f, Finding{"ast05", 5.7, rel, "unsafe deserialization payload: skill-supplied YAML/JSON/Python serialization content contains object/apply tags or pickle-style gadgets near execution payloads", true, "SKILL-R0036", 0, 0})
 	}
 	if credentialTrapTokenOutbound(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "credential trap with outbound sink: hard-coded secret/token patterns or credential-harvest terms are paired with webhook, fetch, or upload behavior", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "credential trap with outbound sink: hard-coded secret/token patterns or credential-harvest terms are paired with webhook, fetch, or upload behavior", true, "SKILL-R0037", 0, 0})
 	}
 	if mcpToolDescriptionInjection(c, b) {
-		f = append(f, Finding{"ast04", 5.5, rel, "MCP/tool metadata prompt injection: tool descriptions or schemas contain hidden policy-override instructions tied to credential, source-code exfiltration, or command execution", true})
+		f = append(f, Finding{"ast04", 5.5, rel, "MCP/tool metadata prompt injection: tool descriptions or schemas contain hidden policy-override instructions tied to credential, source-code exfiltration, or command execution", true, "SKILL-R0038", 0, 0})
 	}
 	if agentInstructionSourceExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "agent instruction data exfiltration: skill-facing instructions tell the agent to read workspace/source files and upload or report them to an external endpoint", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "agent instruction data exfiltration: skill-facing instructions tell the agent to read workspace/source files and upload or report them to an external endpoint", true, "SKILL-R0039", 0, 0})
 	}
 	if brandImpersonationMetadata(c, b) {
-		f = append(f, Finding{"ast04", 5.4, rel, "brand impersonation metadata: skill claims a trusted provider while using unofficial publisher signals and sensitive permissions or credential context", true})
+		f = append(f, Finding{"ast04", 5.4, rel, "brand impersonation metadata: skill claims a trusted provider while using unofficial publisher signals and sensitive permissions or credential context", true, "SKILL-R0040", 0, 0})
 	}
 	if projectConfigAutoRunHijack(c, b) {
-		f = append(f, Finding{"ast02", 5.8, rel, "project auto-run configuration hijack: repository config can execute remote or credential-exfiltrating commands when opened, built, or committed", true})
+		f = append(f, Finding{"ast02", 5.8, rel, "project auto-run configuration hijack: repository config can execute remote or credential-exfiltrating commands when opened, built, or committed", true, "SKILL-R0041", 0, 0})
 	}
 	if dockerfileRemoteEntrypoint(c, b) {
-		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe pulls remote mutable content into an executable entrypoint or startup command without integrity pinning", true})
+		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe pulls remote mutable content into an executable entrypoint or startup command without integrity pinning", true, "SKILL-R0042", 0, 0})
 	}
 	if escapedPayloadEvasion(c, b) {
-		f = append(f, Finding{"ast08", 5.4, rel, "escaped payload evasion: encoded hex/unicode/url string reconstruction is paired with eval/exec, remote loading, or credential exfiltration behavior", true})
+		f = append(f, Finding{"ast08", 5.4, rel, "escaped payload evasion: encoded hex/unicode/url string reconstruction is paired with eval/exec, remote loading, or credential exfiltration behavior", true, "SKILL-R0043", 0, 0})
 	}
 	if dependencyConfusionOrMutableInstaller(c, b) {
-		f = append(f, Finding{"ast02", 5.2, rel, "dependency confusion or mutable installer path: package metadata uses alternate registries, latest/mutable refs, or package runners with install-time execution risk", true})
+		f = append(f, Finding{"ast02", 5.2, rel, "dependency confusion or mutable installer path: package metadata uses alternate registries, latest/mutable refs, or package runners with install-time execution risk", true, "SKILL-R0044", 0, 0})
 	}
 	if knownTyposquatOrDependencyConfusion(c, b) {
-		f = append(f, Finding{"ast02", 5.4, rel, "known dependency-confusion or typosquat package pattern appears in skill package metadata", true})
+		f = append(f, Finding{"ast02", 5.4, rel, "known dependency-confusion or typosquat package pattern appears in skill package metadata", true, "SKILL-R0045", 0, 0})
 	}
 	if alternatePrivateIndexRisk(c, b) {
-		f = append(f, Finding{"ast02", 3.6, rel, "package metadata resolves private/internal dependency names through an alternate registry or index without an accompanying lock/provenance signal", false})
+		f = append(f, Finding{"ast02", 3.6, rel, "package metadata resolves private/internal dependency names through an alternate registry or index without an accompanying lock/provenance signal", false, "SKILL-R0046", 0, 0})
 	}
 	if ciWorkflowRemoteExecution(c, b) {
-		f = append(f, Finding{"ast02", 5.5, rel, "repository workflow/config executes remote installer content during CI or project automation", true})
+		f = append(f, Finding{"ast02", 5.5, rel, "repository workflow/config executes remote installer content during CI or project automation", true, "SKILL-R0047", 0, 0})
 	}
 	if localBinaryExecutionLure(c, b) {
-		f = append(f, Finding{"ast01", 5.0, rel, "skill-facing instructions require running a bundled local binary or installer helper before use, creating an opaque execution path", true})
+		f = append(f, Finding{"ast01", 5.0, rel, "skill-facing instructions require running a bundled local binary or installer helper before use, creating an opaque execution path", true, "SKILL-R0048", 0, 0})
 	}
 	if startupPersistencePayload(c, b) {
-		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true})
+		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true, "SKILL-R0051",
+
+			// v38-loop1: high-confidence recall micro-rules from the six rule-pack review.
+			// These only fire on concrete behavior chains and keep the original v38 thresholds intact.
+			0, 0})
 	}
-	// v38-loop1: high-confidence recall micro-rules from the six rule-pack review.
-	// These only fire on concrete behavior chains and keep the original v38 thresholds intact.
+
 	if microInstallRemoteExec(c, b) {
-		f = append(f, Finding{"ast02", 5.9, rel, "install lifecycle or build metadata downloads remote content and executes it", true})
+		f = append(f, Finding{"ast02", 5.9, rel, "install lifecycle or build metadata downloads remote content and executes it", true, "SKILL-R0052", 0, 0})
 	}
 	if microUnsafeYamlTag(c, b) {
-		f = append(f, Finding{"ast05", 5.8, rel, "YAML content contains object/apply/function tags capable of constructing executable objects", true})
+		f = append(f, Finding{"ast05", 5.8, rel, "YAML content contains object/apply/function tags capable of constructing executable objects", true, "SKILL-R0053", 0, 0})
 	}
 	if microHostIsolationStrong(c, b) {
-		f = append(f, Finding{"ast06", 5.7, rel, "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure", true})
+		f = append(f, Finding{"ast06", 5.7, rel, "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure", true, "SKILL-R0054",
+
+			// v38-loop2: agent runtime configuration and remote plugin registration chains.
+			0, 0})
 	}
-	// v38-loop2: agent runtime configuration and remote plugin registration chains.
+
 	if microAgentConfigHookRCE(c, b) {
-		f = append(f, Finding{"ast02", 5.8, rel, "agent or MCP configuration hook can launch shell/package-runner commands or rewrite model/network execution paths", true})
+		f = append(f, Finding{"ast02", 5.8, rel, "agent or MCP configuration hook can launch shell/package-runner commands or rewrite model/network execution paths", true, "SKILL-R0055", 0, 0})
 	}
 	if microRemotePluginNoApproval(c, b) {
-		f = append(f, Finding{"ast06", 5.4, rel, "remote plugin or tool registration is allowed without approval/authentication and can load external code", true})
+		f = append(f, Finding{"ast06", 5.4, rel, "remote plugin or tool registration is allowed without approval/authentication and can load external code", true, "SKILL-R0056", 0, 0})
 	}
 	if microSimpleHotReloadRemote(c, b) {
-		f = append(f, Finding{"ast07", 5.4, rel, "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime", true})
+		f = append(f, Finding{"ast07", 5.4, rel, "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime", true, "SKILL-R0057",
+
+			// v38-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
+			0, 0})
 	}
-	// v38-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
+
 	if microUnsafeDeserializeSourceSink(c, b) {
-		f = append(f, Finding{"ast05", 5.6, rel, "unsafe deserialization primitive is near file, network, stdin, argument, upload, or decoded input source", true})
+		f = append(f, Finding{"ast05", 5.6, rel, "unsafe deserialization primitive is near file, network, stdin, argument, upload, or decoded input source", true, "SKILL-R0058", 0, 0})
 	}
 	if microExecTaintedSourceSink(c, b) {
-		f = append(f, Finding{"ast01", 5.1, rel, "command/eval sink is near user, environment, decoded, network, or manifest-controlled input", true})
+		f = append(f, Finding{"ast01", 5.1, rel, "command/eval sink is near user, environment, decoded, network, or manifest-controlled input", true, "SKILL-R0059",
+
+			// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
+			0, 0})
 	}
-	// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
+
 	if microPIIOutboundChain(c, b) {
-		f = append(f, Finding{"ast03", 5.0, rel, "PII or personal-data collection is paired with webhook/upload/POST outbound transfer", true})
+		f = append(f, Finding{"ast03", 5.0, rel, "PII or personal-data collection is paired with webhook/upload/POST outbound transfer", true, "SKILL-R0060", 0, 0})
 	}
 	if microBrowserWalletStoreExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true})
+		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true, "SKILL-R0061",
+
+			// v38-loop6..15: additional high-confidence behavior chains only.
+			0, 0})
 	}
-	// v38-loop6..15: additional high-confidence behavior chains only.
+
 	if microMCPRemoteAutoApprove(c, b) {
-		f = append(f, Finding{"ast02", 5.7, rel, "MCP/agent server configuration launches remote or latest package-runner code with approval bypass or auto-approval", true})
+		f = append(f, Finding{"ast02", 5.7, rel, "MCP/agent server configuration launches remote or latest package-runner code with approval bypass or auto-approval", true, "SKILL-R0062", 0, 0})
 	}
 	if microVSCodeExtensionWorkspaceExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "VS Code/IDE extension workspace file access is paired with outbound upload or telemetry sink", true})
+		f = append(f, Finding{"ast01", 5.5, rel, "VS Code/IDE extension workspace file access is paired with outbound upload or telemetry sink", true, "SKILL-R0063", 0, 0})
 	}
 	if microBrowserExtensionBroadExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.5, rel, "browser extension broad host/cookie/storage permissions are paired with outbound exfiltration behavior", true})
+		f = append(f, Finding{"ast01", 5.5, rel, "browser extension broad host/cookie/storage permissions are paired with outbound exfiltration behavior", true, "SKILL-R0064", 0, 0})
 	}
 	if microCloudMetadataCredentialExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.7, rel, "cloud instance metadata credential endpoint access is paired with outbound exfiltration behavior", true})
+		f = append(f, Finding{"ast01", 5.7, rel, "cloud instance metadata credential endpoint access is paired with outbound exfiltration behavior", true, "SKILL-R0065", 0, 0})
 	}
 	if microKubeServiceAccountExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.6, rel, "Kubernetes service-account token access is paired with outbound upload or cluster pivot behavior", true})
+		f = append(f, Finding{"ast01", 5.6, rel, "Kubernetes service-account token access is paired with outbound upload or cluster pivot behavior", true, "SKILL-R0066", 0, 0})
 	}
 	if microShellCredentialStoreExfil(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "shell history, netrc, npm, pypirc, git-credentials, or SSH config material is paired with outbound upload behavior", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "shell history, netrc, npm, pypirc, git-credentials, or SSH config material is paired with outbound upload behavior", true, "SKILL-R0067", 0, 0})
 	}
 	if microCIIdentityTokenExfil(c, b) {
-		f = append(f, Finding{"ast02", 5.5, rel, "CI workflow requests identity/secrets tokens and sends them to an external HTTP sink", true})
+		f = append(f, Finding{"ast02", 5.5, rel, "CI workflow requests identity/secrets tokens and sends them to an external HTTP sink", true, "SKILL-R0068", 0, 0})
 	}
 	if microDockerfileRemoteAddExec(c, b) {
-		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe downloads remote mutable content and executes it during build or entrypoint", true})
+		f = append(f, Finding{"ast02", 5.6, rel, "Docker/build recipe downloads remote mutable content and executes it during build or entrypoint", true, "SKILL-R0069", 0, 0})
 	}
 	if microScanBypassSelfUpdate(c, b) {
-		f = append(f, Finding{"ast08", 5.3, rel, "skill-facing instructions describe scan-bypass or post-scan self-update behavior that fetches remote executable/instruction material", true})
+		f = append(f, Finding{"ast08", 5.3, rel, "skill-facing instructions describe scan-bypass or post-scan self-update behavior that fetches remote executable/instruction material", true, "SKILL-R0070", 0, 0})
 	}
 	if microPolicyFileTamper(c, b) {
-		f = append(f, Finding{"ast01", 5.4, rel, "skill modifies agent policy or instruction files to disable guards while enabling command/network behavior", true})
+		f = append(f, Finding{"ast01", 5.4, rel, "skill modifies agent policy or instruction files to disable guards while enabling command/network behavior", true, "SKILL-R0071", 0, 0})
 	}
 	if crossPlatformMetadataLoss(c, b) {
-		f = append(f, Finding{"ast10", 5.1, rel, "cross-platform port appears to drop or weaken security metadata such as risk tier, signatures, deny rules, allowlisted egress, or scoped permissions", true})
+		f = append(f, Finding{"ast10", 5.1, rel, "cross-platform port appears to drop or weaken security metadata such as risk tier, signatures, deny rules, allowlisted egress, or scoped permissions", true, "SKILL-R0072", 0, 0})
 	}
 
 	return f
@@ -3640,43 +3601,43 @@ func analyzeCrossFileV26(blobs []FileBlob) []Finding {
 		}
 	}
 	if hasManifestBroad && hasSink {
-		f = append(f, Finding{"ast03", 3.8, "manifest+code", "broad declared capability is paired with executable command/eval behavior", true})
+		f = append(f, Finding{"ast03", 3.8, "manifest+code", "broad declared capability is paired with executable command/eval behavior", true, "SKILL-R0107", 0, 0})
 	}
 	if hasPkgLifecycle && hasInstallerExecNet {
-		f = append(f, Finding{"ast02", 6.6, "package lifecycle+installer", "package lifecycle script is paired with installer network fetch and command execution", true})
+		f = append(f, Finding{"ast02", 6.6, "package lifecycle+installer", "package lifecycle script is paired with installer network fetch and command execution", true, "SKILL-R0108", 0, 0})
 	}
 	if hasPythonBuildHook && hasBuildExecNet {
-		f = append(f, Finding{"ast02", 6.1, "python build metadata+code", "python build metadata is paired with network fetch and command execution code", true})
+		f = append(f, Finding{"ast02", 6.1, "python build metadata+code", "python build metadata is paired with network fetch and command execution code", true, "SKILL-R0109", 0, 0})
 	}
 	if hasRemote && hasSink {
-		f = append(f, Finding{"ast01", 4.0, "multi-file", "network/update behavior is paired with command/eval execution across files", true})
+		f = append(f, Finding{"ast01", 4.0, "multi-file", "network/update behavior is paired with command/eval execution across files", true, "SKILL-R0110", 0, 0})
 	}
 	if hasRemote && hasSecret {
-		f = append(f, Finding{"ast01", 4.2, "multi-file", "network behavior is paired with secret/token access across files", true})
+		f = append(f, Finding{"ast01", 4.2, "multi-file", "network behavior is paired with secret/token access across files", true, "SKILL-R0111", 0, 0})
 	}
 	if hasPersistence && (hasRemote || hasSink || hasSecret) {
-		f = append(f, Finding{"ast01", 4.4, "multi-file", "persistence/startup modification appears together with network, execution, or secret access", true})
+		f = append(f, Finding{"ast01", 4.4, "multi-file", "persistence/startup modification appears together with network, execution, or secret access", true, "SKILL-R0149", 0, 0})
 	}
 	if hasCrossPlatformReuse {
-		f = append(f, Finding{"ast10", 4.6, "multi-file", "skill/plugin material appears reused or bridged across multiple agent, IDE, browser, or extension platforms", false})
+		f = append(f, Finding{"ast10", 4.6, "multi-file", "skill/plugin material appears reused or bridged across multiple agent, IDE, browser, or extension platforms", false, "SKILL-R0150", 0, 0})
 	}
 	if hasCrossPlatformSecurityMetadata && hasCrossPlatformWeakening && hasCrossPlatformIdentityOrEgressLoss {
-		f = append(f, Finding{"ast10", 5.1, "cross-platform metadata", "ported skill material loses or weakens security metadata such as signatures, content hashes, deny-write rules, default-deny egress, or scoped permissions", true})
+		f = append(f, Finding{"ast10", 5.1, "cross-platform metadata", "ported skill material loses or weakens security metadata such as signatures, content hashes, deny-write rules, default-deny egress, or scoped permissions", true, "SKILL-R0116", 0, 0})
 	}
 	if hasSink && hasGlobalBase64 && hasGlobalEvalExec {
-		f = append(f, Finding{"ast08", 3.4, "multi-file", "encoded payload handling is paired with eval/exec behavior", false})
+		f = append(f, Finding{"ast08", 3.4, "multi-file", "encoded payload handling is paired with eval/exec behavior", false, "SKILL-R0112", 0, 0})
 	}
 	if hasMetaNetworkDisabled && hasCodeOutbound && (hasCodeSecret || hasCodeExec || hasCodeDestructive) {
-		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares network access disabled while executable skill material performs outbound network behavior tied to secrets, command execution, or destructive activity", true})
+		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares network access disabled while executable skill material performs outbound network behavior tied to secrets, command execution, or destructive activity", true, "SKILL-R0117", 0, 0})
 	}
 	if hasMetaShellDisabled && hasCodeExec && (hasCodeOutbound || hasCodeSecret || hasCodeDecoder || hasCodeDestructive) {
-		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares shell or command execution disabled while executable material reaches command/eval sinks with risky context", true})
+		f = append(f, Finding{"ast04", 5.2, "manifest+code", "metadata declares shell or command execution disabled while executable material reaches command/eval sinks with risky context", true, "SKILL-R0118", 0, 0})
 	}
 	if hasMetaLowRisk && ((hasCodeOutbound && hasCodeSecret) || (hasCodeOutbound && hasCodeExec) || hasCodeDestructive) {
-		f = append(f, Finding{"ast04", 5.3, "manifest+code", "metadata claims low/safe risk while code shows credential, outbound execution, or destructive behavior inconsistent with that risk tier", true})
+		f = append(f, Finding{"ast04", 5.3, "manifest+code", "metadata claims low/safe risk while code shows credential, outbound execution, or destructive behavior inconsistent with that risk tier", true, "SKILL-R0119", 0, 0})
 	}
 	if hasMetaCleanScan && ((hasCodeOutbound && hasCodeSecret) || (hasCodeOutbound && hasCodeExec) || (hasCodeDecoder && hasCodeExec)) {
-		f = append(f, Finding{"ast08", 5.2, "scan metadata+code", "metadata advertises a clean/passed scan while skill code contains credential, outbound, decoded, or command-execution behavior", true})
+		f = append(f, Finding{"ast08", 5.2, "scan metadata+code", "metadata advertises a clean/passed scan while skill code contains credential, outbound, decoded, or command-execution behavior", true, "SKILL-R0120", 0, 0})
 	}
 	return f
 }

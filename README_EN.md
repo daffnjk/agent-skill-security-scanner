@@ -1,3 +1,5 @@
+> **Unreleased security update:** `v0.3.0-dev` uses engine identity `v41-hardening.1`. Published release `v0.2.0` and historical engine `v41` use different version namespaces. See [security boundaries and migration](docs/hardening.md) for current contracts.
+
 <div align="center">
 
 # Agent Skill Security Scanner

@@ -38,8 +38,8 @@ func TestOversizedSamplingIsReportedWithoutSilentFailure(t *testing.T) {
 	writeTestFile(t, root, "main.js", large)
 
 	report := analyzeSkill(root)
-	if !report.Scan.Complete {
-		t.Fatalf("successful bounded sampling should remain complete: %+v", report.Scan)
+	if report.Scan.Complete {
+		t.Fatalf("bounded sampling must be marked incomplete: %+v", report.Scan)
 	}
 	if report.Scan.SampledFiles != 1 {
 		t.Fatalf("expected sampled file metadata, got %+v", report.Scan)

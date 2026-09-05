@@ -1,20 +1,26 @@
 name: Agent Skill Security Scanner
-description: Build v41 and scan complete Agent Skill directories without executing target content.
-
+description: Offline Skill scanning with mandatory completeness and report-integrity checks.
 inputs:
   path:
-    description: Workspace-relative directory whose immediate children are Skills.
+    description: Workspace-relative Skill or collection directory.
     required: false
     default: skills
+  mode:
+    description: "Input mode: auto (SKILL.md aware), single, or collection."
+    required: false
+    default: auto
   output:
-    description: Workspace-relative output directory for JSONL reports.
+    description: Workspace-relative report directory, disjoint from the input.
     required: false
     default: .skillscan
+  timeout:
+    description: Whole-run deadline (Go duration, for example 5m).
+    required: false
+    default: 5m
   fail_on:
-    description: "Gate policy: malicious, suspicious, or never."
+    description: "Risk policy: malicious, suspicious, or never. Incomplete scans always fail."
     required: false
     default: malicious
-
 outputs:
   malicious:
     description: Number of malicious verdicts.
@@ -28,32 +34,39 @@ outputs:
   results:
     description: Workspace-relative path to results.jsonl.
     value: ${{ inputs.output }}/results.jsonl
-
 runs:
   using: composite
   steps:
-    - name: Set up Go
+    - name: Set up supported Go toolchain
       uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
-        go-version-file: ${{ github.action_path }}/go.mod
+        go-version: '1.27.1'
         cache: false
-
     - name: Build trusted scanner source
       shell: bash
       env:
         ACTION_SOURCE: ${{ github.action_path }}
+        GOENV: 'off'
+        GOFLAGS: ''
+        GOWORK: 'off'
+        GOTOOLCHAIN: local
       run: |
         set -euo pipefail
         cd "$ACTION_SOURCE"
+        # Downloaded Actions may not contain .git; retain source-hash identity.
+        revision="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
         GOCACHE="$RUNNER_TEMP/skillscan-go-cache" CGO_ENABLED=0 \
-          go build -trimpath -ldflags="-s -w -buildid=" \
+          go build -trimpath -ldflags="-s -w -buildid= -X main.buildCommit=$revision" \
           -o "$RUNNER_TEMP/skillscan" ./cmd/detector
-
     - name: Scan complete Skill directories
+      id: scan
       shell: bash
       env:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+        SKILLSCAN_ALLOW_PARTIAL: '0'
       run: |
         set -euo pipefail
         workspace="$(realpath -m "$GITHUB_WORKSPACE")"
@@ -61,17 +74,8 @@ runs:
         output_path="$(realpath -m "$workspace/$INPUT_OUTPUT")"
         case "$scan_path/" in "$workspace/"*) ;; *) echo "scan path escapes the workspace" >&2; exit 2 ;; esac
         case "$output_path/" in "$workspace/"*) ;; *) echo "output path escapes the workspace" >&2; exit 2 ;; esac
-        mkdir -p "$output_path"
-        set +e
-        "$RUNNER_TEMP/skillscan" "$scan_path" "$output_path"
-        scan_status=$?
-        set -e
-        if [ "$scan_status" -ne 0 ]; then
-          echo "skillscan failed or produced an incomplete scan (exit $scan_status)" >&2
-          exit "$scan_status"
-        fi
-
-    - name: Apply repository gate policy
+        "$RUNNER_TEMP/skillscan" --mode "$INPUT_MODE" --timeout "$INPUT_TIMEOUT" "$scan_path" "$output_path"
+    - name: Independently validate completeness and apply risk policy
       id: gate
       shell: bash
       env:
@@ -82,4 +86,6 @@ runs:
         set -euo pipefail
         python3 "$ACTION_SOURCE/scripts/github_action_gate.py" \
           --results "$GITHUB_WORKSPACE/$INPUT_OUTPUT/results.jsonl" \
+          --scan-metadata "$GITHUB_WORKSPACE/$INPUT_OUTPUT/scan-metadata.jsonl" \
+          --seal "$GITHUB_WORKSPACE/$INPUT_OUTPUT/scan-complete.json" \
           --fail-on "$INPUT_FAIL_ON"

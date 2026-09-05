@@ -1,3 +1,16 @@
+## Unreleased — v0.3.0-dev / v41-hardening.1
+
+- Enforce independent complete-scan validation and sealed, run-bound reports in GitHub Action.
+- Use exclusive randomized temporary files for all reports; reject overlapping input/output paths.
+- Add explicit single/collection modes, SKILL.md-aware auto discovery, and visible symlink failures.
+- Treat sampling and bounded-analysis truncation as incomplete; disable partial-analysis benign dampeners.
+- Bound discovery, streaming directory traversal, depth, Skill count, and whole-process scan duration.
+- Add explicit stable rule IDs, structured verified-flow positions, scanner/ruleset identity, and scoped input digests.
+- Inventory external instruction delegation offline without changing historical AST05 semantics.
+- Upgrade production Go to 1.27.1, pin the builder digest, and remove the runtime shell via scratch.
+- Add end-to-end regressions and strict/screening benchmark comparison with source/attack/split breakdowns.
+- Public benchmark datasets have NOT been rerun for this change.
+
 # Changelog
 
 All notable public changes are documented here.

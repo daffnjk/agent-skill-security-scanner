@@ -14,6 +14,7 @@ import (
 // small number of high-value source -> transform -> sink chains and supplies a
 // narrow false-positive guard for normal provider authentication flows.
 type BehaviorIRSummary struct {
+	Truncated               bool
 	Findings                []Finding
 	SafeAuthFiles           map[string]bool
 	CredentialSourceFiles   map[string]bool
@@ -166,6 +167,12 @@ func analyzeBehaviorIR(blobs []FileBlob) BehaviorIRSummary {
 	}
 	summary.OnlySafeDeserialization = len(summary.SafeDeserializeFiles) > 0 && len(summary.UnsafeDeserializeFiles) == 0 && summary.VerifiedCategories["ast05"] == 0
 
+	if summary.Truncated {
+		summary.OnlyExpectedAuth = false
+		summary.OnlySafeDeserialization = false
+		summary.SafeAuthFiles = map[string]bool{}
+		summary.SafeDeserializeFiles = map[string]bool{}
+	}
 	sort.SliceStable(summary.Findings, func(i, j int) bool {
 		if summary.Findings[i].Category != summary.Findings[j].Category {
 			return summary.Findings[i].Category < summary.Findings[j].Category
@@ -187,8 +194,12 @@ func scanBehaviorIRFile(
 	seenFinding map[string]bool,
 ) {
 	fileKey := strings.ToLower(filepath.ToSlash(b.Rel))
+	if b.Sampled {
+		summary.Truncated = true
+	}
 	statements := splitLogicalStatements(b.Lower)
 	if len(statements) > 12000 {
+		summary.Truncated = true
 		statements = statements[:12000]
 	}
 	credentialProviders := collectFlowCredentialProviders(statements)
@@ -210,6 +221,7 @@ func scanBehaviorIRFile(
 			continue
 		}
 		if len(text) > 32768 {
+			summary.Truncated = true
 			text = text[:32768]
 		}
 
@@ -299,38 +311,41 @@ func scanBehaviorIRFile(
 					}
 					unsafeAuthContext[fileKey] = true
 					reason := fmt.Sprintf("verified-flow: %s at line %d%s reaches %s at line %d targeting %s", src.Origin, src.Line, formatFlowTransforms(src.Transforms), sink.Name, st.StartLine, flowDestinationLabel(sink.Destination))
-					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast01", 6.9, b.Rel, reason, true})
+					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast01", 6.9, b.Rel, reason, true, "SKILL-R0001", st.StartLine, st.EndLine})
 				case "exec":
 					if src.Kind != flowRemoteInput && src.Kind != flowUserInput && src.Kind != flowMetadataInput && src.Kind != flowFileInput {
 						continue
 					}
 					cat, weight := remoteExecCategory(b.Rel, b.Lower, src)
 					reason := fmt.Sprintf("verified-flow: %s at line %d%s reaches %s at line %d", src.Origin, src.Line, formatFlowTransforms(src.Transforms), sink.Name, st.StartLine)
-					emitBehaviorIRFinding(summary, seenFinding, Finding{cat, weight, b.Rel, reason, true})
+					emitBehaviorIRFinding(summary, seenFinding, Finding{cat, weight, b.Rel, reason, true, "SKILL-R0002", st.StartLine, st.EndLine})
 				case "deserialize":
 					if src.Kind != flowRemoteInput && src.Kind != flowUserInput && src.Kind != flowMetadataInput && src.Kind != flowFileInput && src.Kind != flowCredentialFile {
 						continue
 					}
 					reason := fmt.Sprintf("verified-flow: %s at line %d%s reaches unsafe deserializer %s at line %d", src.Origin, src.Line, formatFlowTransforms(src.Transforms), sink.Name, st.StartLine)
-					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast05", 6.6, b.Rel, reason, true})
+					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast05", 6.6, b.Rel, reason, true, "SKILL-R0003", st.StartLine, st.EndLine})
 				case "dynamic-load":
 					if src.Kind != flowRemoteInput && src.Kind != flowFileInput {
 						continue
 					}
 					reason := fmt.Sprintf("verified-flow: %s at line %d%s reaches dynamic loader %s at line %d", src.Origin, src.Line, formatFlowTransforms(src.Transforms), sink.Name, st.StartLine)
-					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast07", 6.5, b.Rel, reason, true})
+					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast07", 6.5, b.Rel, reason, true, "SKILL-R0004", st.StartLine, st.EndLine})
 				case "local-control":
 					if src.Kind != flowUserInput && src.Kind != flowMetadataInput && src.Kind != flowRemoteInput {
 						continue
 					}
 					reason := fmt.Sprintf("verified-flow: %s at line %d reaches host-local agent/MCP control sink %s at line %d targeting %s", src.Origin, src.Line, sink.Name, st.StartLine, flowDestinationLabel(sink.Destination))
-					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast06", 6.4, b.Rel, reason, true})
+					emitBehaviorIRFinding(summary, seenFinding, Finding{"ast06", 6.4, b.Rel, reason, true, "SKILL-R0005", st.
+
+						// A provider-auth dampener is intentionally withheld when the same file
+						// also performs an unresolved or provider-mismatched network write. This
+						// keeps the precision fix from hiding a second, weakly-obfuscated exfil
+						// path that the micro data-flow parser could not bind to a symbol.
+						StartLine, st.EndLine})
 				}
 			}
-			// A provider-auth dampener is intentionally withheld when the same file
-			// also performs an unresolved or provider-mismatched network write. This
-			// keeps the precision fix from hiding a second, weakly-obfuscated exfil
-			// path that the micro data-flow parser could not bind to a symbol.
+
 			if sink.Kind == "network" && !networkHadCredential && len(credentialProviders) > 0 && !destinationMatchesAnyProvider(credentialProviders, sink.Destination) {
 				unsafeAuthContext[fileKey] = true
 			}
@@ -348,8 +363,12 @@ func scanBehaviorIRBridgeSinks(
 	bridges map[string]flowPathBridge,
 	seenFinding map[string]bool,
 ) {
+	if b.Sampled {
+		summary.Truncated = true
+	}
 	statements := splitLogicalStatements(b.Lower)
 	if len(statements) > 12000 {
+		summary.Truncated = true
 		statements = statements[:12000]
 	}
 	constants := map[string]string{}
@@ -360,6 +379,7 @@ func scanBehaviorIRBridgeSinks(
 			continue
 		}
 		if len(text) > 32768 {
+			summary.Truncated = true
 			text = text[:32768]
 		}
 		if target, rhs, ok := parseFlowAssignment(text); ok {
@@ -408,7 +428,7 @@ func emitBehaviorIRBridgeFindings(
 			cat, weight = "ast02", 6.8
 		}
 		reason := fmt.Sprintf("verified-flow: %s at %s:%d writes %s, then %s:%d reaches %s through that exact artifact", bridge.Taint.Origin, sanitizePath(bridge.File), bridge.Line, compactFlowPath(bridge.Path), sanitizePath(b.Rel), st.StartLine, sink.Name)
-		emitBehaviorIRFinding(summary, seenFinding, Finding{cat, weight, b.Rel, reason, true})
+		emitBehaviorIRFinding(summary, seenFinding, Finding{cat, weight, b.Rel, reason, true, "SKILL-R0006", st.StartLine, st.EndLine})
 	}
 }
 
@@ -431,6 +451,9 @@ func emitBehaviorIRFinding(summary *BehaviorIRSummary, seen map[string]bool, f F
 // provider-matched Authorization flow. Specific wallet, cloud metadata,
 // webhook, persistence, lifecycle, or policy-tampering rules are untouched.
 func behaviorIRWeightFactor(f Finding, summary BehaviorIRSummary) float64 {
+	if summary.Truncated {
+		return 1.0
+	}
 	fileKey := strings.ToLower(filepath.ToSlash(f.File))
 	reason := strings.ToLower(f.Reason)
 
