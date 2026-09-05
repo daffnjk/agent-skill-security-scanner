@@ -37,55 +37,111 @@ func inventoryExternalInstructions(file, text string) []ExternalInstructionDepen
 	if !isDocPath(file) {
 		return nil
 	}
-	lines := strings.Split(text, "\n")
 	deps := make([]ExternalInstructionDependency, 0)
-	for i, line := range lines {
-		urls := externalURLRE.FindAllString(line, 257)
-		if len(urls) == 0 {
+	previous := ""
+	for i, line := range strings.Split(text, "\n") {
+		if externalFormattingLine(line) {
 			continue
 		}
-		delegated := false
-		for j := max(0, i-1); j <= i && j < len(lines); j++ {
-			// A warning elsewhere cannot suppress a separate active instruction.
-			if delegatedInstructionRE.MatchString(lines[j]) && !negatedInstructionRE.MatchString(lines[j]) {
-				delegated = true
-			}
-		}
-		for _, raw := range urls {
-			if len(deps) >= 256 {
-				return deps
-			}
-			raw = strings.TrimRight(raw, ".,;:")
-			u, err := url.Parse(raw)
-			if err != nil || u.Hostname() == "" {
+		for _, clause := range externalInstructionClauses(line) {
+			if externalFormattingLine(clause) {
 				continue
 			}
-			pinned := false
-			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-			if u.Hostname() == "raw.githubusercontent.com" && len(parts) >= 4 {
-				pinned = pinnedRevisionRE.MatchString(parts[2])
+			urls := externalURLRE.FindAllString(clause, 257)
+			known, delegated := externalDirectiveState(clause)
+			continuation := len(urls) > 0 && externalLinkContinuation(clause)
+			if !known && continuation {
+				_, delegated = externalDirectiveState(previous)
 			}
-			if u.Hostname() == "github.com" && len(parts) >= 5 && (parts[2] == "blob" || parts[2] == "raw") {
-				pinned = pinnedRevisionRE.MatchString(parts[3])
+			// Carry the nearest substantive context across formatting and link
+			// lists, but reset at other prose, headings or explicit negation.
+			if !continuation {
+				previous = clause
 			}
-			u.User = nil
-			u.RawQuery = ""
-			u.ForceQuery = false
-			u.Fragment = ""
-			dep := ExternalInstructionDependency{RuleID: "SKILL-EXTERNAL-REFERENCE", File: file, StartLine: i + 1, PositionScope: "original", URL: u.String(), URLSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(raw))), Kind: "reference", VersionPinned: pinned, ContentReviewed: false, TaxonomyVersion: externalTaxonomyVersion}
-			if delegated {
-				dep.RuleID = "SKILL-EXTERNAL-INSTRUCTIONS"
-				dep.Kind = "instruction-delegation"
-				dep.Category = "ast05"
+			for _, raw := range urls {
+				if len(deps) >= 256 {
+					return deps
+				}
+				raw = strings.TrimRight(raw, ".,;:，。；！？!?")
+				u, err := url.Parse(raw)
+				if err != nil || u.Hostname() == "" {
+					continue
+				}
+				pinned := false
+				parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+				if u.Hostname() == "raw.githubusercontent.com" && len(parts) >= 4 {
+					pinned = pinnedRevisionRE.MatchString(parts[2])
+				}
+				if u.Hostname() == "github.com" && len(parts) >= 5 && (parts[2] == "blob" || parts[2] == "raw") {
+					pinned = pinnedRevisionRE.MatchString(parts[3])
+				}
+				u.User = nil
+				u.RawQuery = ""
+				u.ForceQuery = false
+				u.Fragment = ""
+				dep := ExternalInstructionDependency{RuleID: "SKILL-EXTERNAL-REFERENCE", File: file, StartLine: i + 1, PositionScope: "original", URL: u.String(), URLSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(raw))), Kind: "reference", VersionPinned: pinned, ContentReviewed: false, TaxonomyVersion: externalTaxonomyVersion}
+				if delegated {
+					dep.RuleID = "SKILL-EXTERNAL-INSTRUCTIONS"
+					dep.Kind = "instruction-delegation"
+					dep.Category = "ast05"
+				}
+				if len(dep.URL) > 2048 {
+					dep.URL = dep.URL[:2048]
+					dep.URLTruncated = true
+				}
+				deps = append(deps, dep)
 			}
-			if len(dep.URL) > 2048 {
-				dep.URL = dep.URL[:2048]
-				dep.URLTruncated = true
-			}
-			deps = append(deps, dep)
 		}
 	}
 	return deps
+}
+
+// Clause punctuation inside a URL is data, not a prose boundary. Mask URL bytes
+// while finding boundaries, retaining original offsets for evidence and hashes.
+var externalClauseBoundaryRE = regexp.MustCompile(`(?i)[;；，。！？!?]|[.,](?:\s|$)|\b(?:but|however|instead)\b|但是|然而|而是`)
+var externalMarkdownLabelRE = regexp.MustCompile(`\[[^\]]*\]`)
+var externalFenceLineRE = regexp.MustCompile("^(`{3,}|~{3,})[[:alnum:]_-]*$")
+
+func externalInstructionClauses(line string) []string {
+	masked := []byte(line)
+	for _, span := range externalURLRE.FindAllStringIndex(line, -1) {
+		end := span[0] + len(strings.TrimRight(line[span[0]:span[1]], ".,;:，。；！？!?"))
+		for i := span[0]; i < end; i++ {
+			masked[i] = ' '
+		}
+	}
+	clauses := make([]string, 0, 1)
+	start := 0
+	for _, boundary := range externalClauseBoundaryRE.FindAllIndex(masked, -1) {
+		clauses = append(clauses, line[start:boundary[0]])
+		start = boundary[1]
+	}
+	return append(clauses, line[start:])
+}
+
+func externalDirectiveState(clause string) (known, active bool) {
+	// A URL's path or query must not supply instructions or negation words.
+	prose := externalURLRE.ReplaceAllString(clause, "URL")
+	known = delegatedInstructionRE.MatchString(prose)
+	return known, known && !negatedInstructionRE.MatchString(prose)
+}
+
+func externalFormattingLine(line string) bool {
+	line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), ">"))
+	if strings.Trim(line, " \t\r*_-=|`~+.0123456789") == "" || externalFenceLineRE.MatchString(line) {
+		return true
+	}
+	switch strings.ToLower(line) {
+	case "<br>", "<br/>", "<br />":
+		return true
+	}
+	return false
+}
+
+func externalLinkContinuation(clause string) bool {
+	text := externalURLRE.ReplaceAllString(clause, "")
+	text = externalMarkdownLabelRE.ReplaceAllString(text, "")
+	return strings.Trim(text, " \t\r\n<>[](){}*_-+>|:`~0123456789.") == ""
 }
 
 // Keep the original URL case, unlike the detector's normalized matching view.
