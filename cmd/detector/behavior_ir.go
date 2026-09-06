@@ -119,6 +119,18 @@ func analyzeBehaviorIR(blobs []FileBlob) BehaviorIRSummary {
 		return summary
 	}
 
+	// Code fences retain file/line attribution, but do not share variable scopes
+	// or file-wide safety exemptions with other fences or natural-language text.
+	for _, b := range blobs {
+		if b.IsDoc {
+			for _, f := range markdownBehaviorFindings(b) {
+				summary.Findings = append(summary.Findings, f)
+				summary.VerifiedCategories[f.Category]++
+				summary.MaliciousFlowFiles[strings.ToLower(filepath.ToSlash(b.Rel))] = true
+			}
+		}
+	}
+
 	bridges := map[string]flowPathBridge{}
 	expectedAuth := map[string]bool{}
 	unsafeAuthContext := map[string]bool{}
