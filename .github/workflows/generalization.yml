@@ -48,6 +48,24 @@ jobs:
               (root / asset).write_bytes(payload)
           (root / 'asset-sha256.json').write_text(json.dumps(assets, indent=2) + '\n')
           PY
+      - name: Decode columnar data as inert JSON records
+        run: |
+          python3 -m pip install pyarrow==19.0.1
+          python3 - <<'PY'
+          import io, json, tarfile
+          from pathlib import Path
+          import pyarrow.parquet as pq
+          root = Path('validation-artifact')
+          with tarfile.open(root / 'skillbench_1650-2026-08-30.tar.gz') as archive:
+              with (root / 'skillbench_1650.records.jsonl').open('w') as out:
+                  for member in archive.getmembers():
+                      if member.name.endswith('.parquet'):
+                          if not member.isfile() or member.size > 32 * 1024 * 1024:
+                              raise ValueError('invalid parquet member')
+                          table = pq.read_table(io.BytesIO(archive.extractfile(member).read()))
+                          for row in table.to_pylist():
+                              out.write(json.dumps(row, ensure_ascii=False) + '\n')
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: frozen-baseline-inputs
