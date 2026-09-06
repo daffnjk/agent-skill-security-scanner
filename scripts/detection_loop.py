@@ -233,6 +233,33 @@ def validate_output(output: Path, expected: set[str]) -> dict[str, str]:
     return {sid: row["verdict"] for sid, row in predictions.items()}
 
 
+
+class ScanFailure(ValueError):
+    """Carry only anonymous aggregate diagnostics out of a failed scan."""
+
+    def __init__(self, image: str, exit_code: int, output: Path, expected: set[str]):
+        super().__init__(f"scanner failed (exit {exit_code}); no partial acceptance")
+        self.diagnostics = {"scanner_image": image, "exit_code": exit_code,
+                            "expected_samples": len(expected)}
+        try:
+            rows = read_jsonl(output / "scan-metadata.jsonl", len(expected))
+            self.diagnostics.update(metadata_rows=len(rows),
+                missing_metadata=len(expected - set(rows)),
+                unexpected_metadata=len(set(rows) - expected),
+                incomplete_samples=sum(r.get("complete") is not True for r in rows.values()))
+            # Never copy paths, IDs, evidence, error text, or arbitrary metadata keys.
+            counters = ("read_errors", "sampled_files", "skipped_symlinks", "skipped_opaque",
+                        "skipped_unsupported", "unreviewed_external_instructions")
+            self.diagnostics["counters"] = {
+                key: sum(r.get(key, 0) for r in rows.values()
+                         if type(r.get(key, 0)) is int and r.get(key, 0) >= 0)
+                for key in counters}
+            self.diagnostics["truncated_samples"] = sum(r.get("truncated") is True for r in rows.values())
+            self.diagnostics["internal_error_samples"] = sum(bool(r.get("internal_error")) for r in rows.values())
+        except (ValueError, TypeError, OSError):
+            self.diagnostics["metadata_invalid"] = True
+
+
 def scan(image: str, skills: Path, expected: set[str]) -> tuple[dict[str, str], float]:
     name = "skillscan-eval-" + uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix="skillscan-output-") as tmp:
@@ -249,7 +276,7 @@ def scan(image: str, skills: Path, expected: set[str]) -> tuple[dict[str, str], 
                                     stderr=subprocess.DEVNULL, check=False)
             elapsed = time.monotonic() - start
             if result.returncode:
-                raise ValueError(f"scanner failed (exit {result.returncode}); no partial acceptance")
+                raise ScanFailure(image, result.returncode, output, expected)
             return validate_output(output, expected), elapsed
         finally:
             subprocess.run(["docker", "rm", "-f", name], timeout=30, check=False,
@@ -421,6 +448,12 @@ def main() -> int:
         failure = {"status": "failed_closed", "error_type": type(error).__name__}
         if type(error) is ValueError:
             failure["reason"] = str(error)  # Only harness-authored messages, never decoder payloads.
+        if isinstance(error, ScanFailure):
+            failure["reason"] = str(error)
+            failure["scan_diagnostics"] = error.diagnostics
+            failure["data_audit"] = audit
+            failure["baseline_ref"] = args.baseline_ref
+            failure["candidate_ref"] = args.candidate_ref
         write_json(args.output / "failure.json", failure)
         (args.output / "summary.md").write_text("# Evaluation failed closed\n\n"
             "An input, integrity, scanner, or resource check failed. No candidate is approved.\n")
