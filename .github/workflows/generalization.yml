@@ -1,0 +1,56 @@
+name: Frozen generalization validation
+on:
+  push:
+    branches: [improve/generalization-evidence-20260906]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Capture source and build trusted scanner
+        run: |
+          mkdir -p validation-artifact
+          git archive HEAD -o validation-artifact/source.tar
+          git rev-parse HEAD > validation-artifact/revision.txt
+          go build -trimpath -o validation-artifact/skillscan ./cmd/detector
+          go test ./... | tee validation-artifact/go-test.txt
+      - name: Download immutable, checksum-verified benchmark data (never execute samples)
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import urllib.request
+          from pathlib import Path
+          assets = {
+              'agent_skill_malware': 'd66676ce9afce9d14f9c9c715c238f66b78458cf77bc23e4f1eb75a701c61fd3',
+              'atr_skill_benchmark': '2971c42c9d0f9d30b788cf6f9de679f8c27b4e8ff322fc67cd42de47d16b7d81',
+              'skillbench_1650': '1b027da5b2f21007b8ac620532c37d598fdf73bcced1f42262efbc78da886462',
+          }
+          root = Path('validation-artifact')
+          for name, expected in assets.items():
+              asset = name + '-2026-08-30.tar.gz'
+              url = 'https://github.com/daffnjk/agent-skill-security-datasets/releases/download/' + name + '-2026-08-30/' + asset
+              with urllib.request.urlopen(url, timeout=90) as response:
+                  payload = response.read(64 * 1024 * 1024 + 1)
+              if len(payload) > 64 * 1024 * 1024:
+                  raise ValueError('archive exceeds download budget: ' + name)
+              if hashlib.sha256(payload).hexdigest() != expected:
+                  raise ValueError('checksum mismatch: ' + name)
+              (root / asset).write_bytes(payload)
+          (root / 'asset-sha256.json').write_text(json.dumps(assets, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frozen-baseline-inputs
+          path: validation-artifact/
+          retention-days: 3
+          if-no-files-found: error
