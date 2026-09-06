@@ -1,0 +1,221 @@
+name: Propose detection improvement
+on:
+  schedule:
+    - cron: '17 19 * * 0' # Monday 03:17 Asia/Taipei: at most one proposal per week.
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+concurrency:
+  group: detection-improvement
+  cancel-in-progress: false
+jobs:
+  propose:
+    if: github.ref == 'refs/heads/main' && vars.DETECTION_AUTOFIX == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      base: ${{ steps.base.outputs.sha }}
+      patch: ${{ steps.patch.outputs.present }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Bound repeated selection and pause while a proposal is open
+        id: budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh pr list --head automation/detection-candidate --state open --json number --jq length)
+          gh run list --workflow detection-improve.yml --limit 1000 --json conclusion > "$RUNNER_TEMP/attempts.json"
+          attempts=$(python3 -c "import json; print(sum(x['conclusion'] != 'skipped' for x in json.load(open('$RUNNER_TEMP/attempts.json'))))")
+          if test "$open" = 0 && test "$attempts" -le 8; then
+            echo 'allowed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Paused: open proposal or eight-run lifetime selection budget exhausted.'
+          fi
+      - name: Record baseline and prepare development data only
+        id: base
+        if: steps.budget.outputs.allowed == 'true'
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf '\n.detection-dev/\n' >> .git/info/exclude
+          python3 scripts/detection_loop.py prepare-dev \
+            --cache "$RUNNER_TEMP/dev-cache" --output .detection-dev
+          env CGO_ENABLED=0 GOENV=off GOFLAGS= GOWORK=off GOTOOLCHAIN=local \
+            go build -trimpath -o "$RUNNER_TEMP/dev-scanner" ./cmd/detector
+          "$RUNNER_TEMP/dev-scanner" .detection-dev/skills .detection-dev/baseline
+      - name: One sandboxed hypothesis; no repository write token
+        if: steps.budget.outputs.allowed == 'true'
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/prompts/detection-improve.md
+          permission-profile: ':workspace'
+          safety-strategy: drop-sudo
+      - name: Export only a patch, not data or agent logs
+        id: patch
+        if: steps.budget.outputs.allowed == 'true'
+        run: |
+          git add -N -- cmd/detector
+          git diff --binary HEAD > "$RUNNER_TEMP/candidate.patch"
+          if test -s "$RUNNER_TEMP/candidate.patch"; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.patch.outputs.present == 'true'
+        with:
+          name: untrusted-candidate
+          path: ${{ runner.temp }}/candidate.patch
+          retention-days: 7
+          if-no-files-found: error
+  test:
+    needs: propose
+    if: needs.propose.outputs.patch == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.propose.outputs.base }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: untrusted-candidate
+          path: ${{ runner.temp }}/incoming
+      - name: Apply only a bounded detector-and-tests patch
+        run: python3 scripts/detection_patch_guard.py "$RUNNER_TEMP/incoming/candidate.patch" --apply
+      - name: Test candidate; evaluator and policy cannot be changed by patch
+        run: |
+          test -z "$(gofmt -l cmd/detector)"
+          go vet ./...
+          go test ./...
+          go test -race ./...
+          go build -trimpath -o "$RUNNER_TEMP/skillscan" ./cmd/detector
+          SKILLSCAN_BIN="$RUNNER_TEMP/skillscan" PYTHONPATH=scripts \
+            python3 -m unittest discover -v -s scripts -p 'test_*.py'
+          bash scripts/selftest.sh
+  validate:
+    needs: [propose, test]
+    if: needs.propose.outputs.patch == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      promote: ${{ steps.gate.outputs.promote }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.propose.outputs.base }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: untrusted-candidate
+          path: ${{ runner.temp }}/incoming
+      - name: Independently validate scope; freeze incumbent binary before patch
+        run: |
+          python3 scripts/detection_patch_guard.py "$RUNNER_TEMP/incoming/candidate.patch"
+          bash scripts/build_detection_image.sh . skillscan-baseline:loop
+          python3 scripts/detection_patch_guard.py "$RUNNER_TEMP/incoming/candidate.patch" --apply
+      - name: Compile candidate without executing candidate tests on the evaluator host
+        run: bash scripts/build_detection_image.sh . skillscan-candidate:loop
+      - name: One external regression check, with no feedback to the proposing agent
+        env:
+          BASE_REF: ${{ needs.propose.outputs.base }}
+        run: |
+          python3 scripts/detection_loop.py evaluate \
+            --baseline-image skillscan-baseline:loop --candidate-image skillscan-candidate:loop \
+            --baseline-ref "$BASE_REF" --candidate-ref "patch:$(sha256sum "$RUNNER_TEMP/incoming/candidate.patch" | cut -d' ' -f1)" \
+            --cache "$RUNNER_TEMP/regression-cache" --output detection-report
+      - name: Only genuine, non-regressing candidates become review proposals
+        id: gate
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          result = json.load(open('detection-report/report.json'))
+          print('promote=' + str(result['gate']['proposal_ready']).lower())
+          PY
+      - name: Aggregate evaluation summary
+        if: always()
+        run: |
+          if test -f detection-report/summary.md; then
+            cat detection-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: proposal-evaluation-${{ github.run_id }}
+          path: detection-report/*.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Package the exact checked patch and aggregate report
+        if: steps.gate.outputs.promote == 'true'
+        run: |
+          mkdir "$RUNNER_TEMP/validated-package"
+          cp "$RUNNER_TEMP/incoming/candidate.patch" detection-report/summary.md "$RUNNER_TEMP/validated-package/"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.gate.outputs.promote == 'true'
+        with:
+          name: validated-candidate
+          path: ${{ runner.temp }}/validated-package/
+          retention-days: 7
+          if-no-files-found: error
+  open-pr:
+    needs: [propose, validate]
+    if: needs.validate.outputs.promote == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.propose.outputs.base }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validated-candidate
+          path: ${{ runner.temp }}/validated
+      - name: Open a review-only PR; never execute candidate code with write credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ needs.propose.outputs.base }}
+        run: |
+          set -euo pipefail
+          branch=automation/detection-candidate
+          if test "$(gh pr list --head "$branch" --state open --json number --jq length)" != 0; then
+            echo 'An improvement PR is already awaiting review; do not overwrite it.'
+            exit 0
+          fi
+          current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if test "$current" != "$BASE_REF"; then
+            echo 'Main changed since evaluation; discard candidate and evaluate next cycle.'
+            exit 0
+          fi
+          patch="$RUNNER_TEMP/validated/candidate.patch"
+          python3 scripts/detection_patch_guard.py "$patch" --apply
+          git switch -c "$branch"
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'fix: propose bounded detection improvement with paired regression tests'
+          gh auth setup-git
+          # Delete a CLOSED proposal branch through normal review before retrying;
+          # no force push, branch deletion or automatic merge is performed here.
+          git push origin "HEAD:refs/heads/$branch"
+          report="$RUNNER_TEMP/validated/summary.md"
+          gh pr create --base main --head "$branch" \
+            --title 'fix: improve Skill detection (bounded, regression-checked proposal)' \
+            --body-file "$report" --draft
