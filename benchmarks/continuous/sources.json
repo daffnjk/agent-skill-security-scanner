@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "catalog_repository": "daffnjk/agent-skill-security-datasets",
+  "catalog_blob_sha": "de24d8cb8f1c043f85ed73bee42b3e6594b09edf",
+  "baseline_ref": "9a69854cbcbd1dd2d092f2f3ec0409ed50868932",
+  "near_duplicate_jaccard": 0.85,
+  "sources": [
+    {
+      "id": "agent_skill_malware",
+      "role": "development",
+      "previously_evaluated": true,
+      "revision": "5cff435ddab2cc34261875885de9ac50d40393ec",
+      "license": "MIT",
+      "asset": "agent_skill_malware-2026-08-30.tar.gz",
+      "sha256": "d66676ce9afce9d14f9c9c715c238f66b78458cf77bc23e4f1eb75a701c61fd3",
+      "member": "skills.jsonl",
+      "text_field": "content",
+      "expected_labels": {"malicious": 124, "benign": 223}
+    },
+    {
+      "id": "atr_skill_benchmark",
+      "role": "regression",
+      "previously_evaluated": true,
+      "revision": "7219b10d2ac077e3db8c87d43d653a67935cdb5d",
+      "license": "MIT",
+      "asset": "atr_skill_benchmark-2026-08-30.tar.gz",
+      "sha256": "2971c42c9d0f9d30b788cf6f9de679f8c27b4e8ff322fc67cd42de47d16b7d81",
+      "member": "atr-skill-benchmark.jsonl",
+      "text_field": "text",
+      "expected_labels": {"malicious": 32, "benign": 466}
+    }
+  ]
+}
