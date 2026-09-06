@@ -1,74 +1,49 @@
 name: Frozen generalization validation
 on:
+  workflow_dispatch:
   push:
     branches: [improve/generalization-evidence-20260906]
+    paths: [.github/workflows/generalization.yml]
 permissions:
   contents: read
 jobs:
-  baseline:
+  frozen-input:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - name: Capture source and build trusted scanner
-        run: |
-          mkdir -p validation-artifact
-          git archive HEAD -o validation-artifact/source.tar
-          git rev-parse HEAD > validation-artifact/revision.txt
-          go build -trimpath -o validation-artifact/skillscan ./cmd/detector
-          go test ./... | tee validation-artifact/go-test.txt
-      - name: Download immutable, checksum-verified benchmark data (never execute samples)
+      - name: Download fixed external corpus as inert data
         run: |
           python3 - <<'PY'
-          import hashlib
-          import json
-          import urllib.request
+          import hashlib, json, tarfile, urllib.request
           from pathlib import Path
-          assets = {
-              'agent_skill_malware': 'd66676ce9afce9d14f9c9c715c238f66b78458cf77bc23e4f1eb75a701c61fd3',
-              'atr_skill_benchmark': '2971c42c9d0f9d30b788cf6f9de679f8c27b4e8ff322fc67cd42de47d16b7d81',
-              'skillbench_1650': '1b027da5b2f21007b8ac620532c37d598fdf73bcced1f42262efbc78da886462',
-          }
-          root = Path('validation-artifact')
-          for name, expected in assets.items():
-              asset = name + '-2026-08-30.tar.gz'
-              url = 'https://github.com/daffnjk/agent-skill-security-datasets/releases/download/' + name + '-2026-08-30/' + asset
-              with urllib.request.urlopen(url, timeout=90) as response:
-                  payload = response.read(64 * 1024 * 1024 + 1)
-              if len(payload) > 64 * 1024 * 1024:
-                  raise ValueError('archive exceeds download budget: ' + name)
-              if hashlib.sha256(payload).hexdigest() != expected:
-                  raise ValueError('checksum mismatch: ' + name)
-              (root / asset).write_bytes(payload)
-          (root / 'asset-sha256.json').write_text(json.dumps(assets, indent=2) + '\n')
-          PY
-      - name: Decode columnar data as inert JSON records
-        run: |
-          python3 -m pip install pyarrow==19.0.1
-          python3 - <<'PY'
-          import io, json, tarfile
-          from pathlib import Path
-          import pyarrow.parquet as pq
-          root = Path('validation-artifact')
-          with tarfile.open(root / 'skillbench_1650-2026-08-30.tar.gz') as archive:
-              with (root / 'skillbench_1650.records.jsonl').open('w') as out:
-                  for member in archive.getmembers():
-                      if member.name.endswith('.parquet'):
-                          if not member.isfile() or member.size > 32 * 1024 * 1024:
-                              raise ValueError('invalid parquet member')
-                          table = pq.read_table(io.BytesIO(archive.extractfile(member).read()))
-                          for row in table.to_pylist():
-                              out.write(json.dumps(row, ensure_ascii=False) + '\n')
+          root = Path('external-validation-input')
+          root.mkdir()
+          name = 'skilltrustbench-2026-08-30.tar.gz'
+          expected = 'a1970087675a6991788c2624eb6101b72445a7c56b3e1720bd2b97f0add6622f'
+          url = 'https://github.com/daffnjk/agent-skill-security-datasets/releases/download/skilltrustbench-2026-08-30/' + name
+          digest = hashlib.sha256()
+          total = 0
+          with urllib.request.urlopen(url, timeout=120) as response, (root / name).open('xb') as output:
+              while chunk := response.read(1024 * 1024):
+                  total += len(chunk)
+                  if total > 512 * 1024 * 1024:
+                      raise ValueError('download exceeds budget')
+                  digest.update(chunk)
+                  output.write(chunk)
+          if digest.hexdigest() != expected:
+              raise ValueError('checksum mismatch')
+          with tarfile.open(root / name) as archive:
+              inventory = [dict(name=m.name, size=m.size, regular=m.isfile()) for m in archive]
+          (root / 'inventory.json').write_text(json.dumps(inventory, indent=2) + '\n')
+          (root / 'provenance.json').write_text(json.dumps(dict(upstream_revision='f90517b7058fdcfea89af114c069fbf973f42bc7', archive_sha256=expected, bytes=total, license='CC-BY-NC-SA-4.0'), indent=2) + '\n')
+          print(json.dumps(dict(bytes=total, members=len(inventory), verified=True)))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: frozen-baseline-inputs
-          path: validation-artifact/
+          name: untouched-skilltrustbench-input
+          path: external-validation-input/
           retention-days: 3
           if-no-files-found: error
