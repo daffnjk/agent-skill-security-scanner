@@ -1,0 +1,47 @@
+name: Apply frozen context-evidence change
+on:
+  push:
+    branches: [improve/generalization-evidence-20260906]
+    paths: [.github/workflows/apply-generalization.yml]
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/improve/generalization-evidence-20260906'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Apply exact reviewed patch without executing any Skill input
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, io, json, subprocess
+          from pathlib import Path
+          encoded = Path('benchmarks/generalization/candidate.patch.gz.b64').read_bytes().strip()
+          with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(encoded, validate=True))) as stream:
+              patch = stream.read(131073)
+          if len(patch) > 131072 or hashlib.sha256(patch).hexdigest() != '9d3fb523e41e3496fc2a4d479d5120d65f349306fe0b33ac5d2c6a790e2a78d5':
+              raise ValueError('patch does not match preregistered candidate')
+          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '-'], input=patch, check=True)
+          frozen = json.loads(Path('benchmarks/generalization/CANDIDATE_FREEZE.json').read_text())
+          for name, expected in frozen['scanner_source_sha256'].items():
+              if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
+                  raise ValueError('candidate source differs from freeze: ' + name)
+          PY
+          test -z "$(gofmt -l cmd/detector)"
+          go vet ./...
+          go test ./...
+          go test -race ./...
+      - name: Commit tested source and remove one-shot application mechanism
+        run: |
+          rm benchmarks/generalization/candidate.patch.gz.b64 .github/workflows/apply-generalization.yml
+          git add cmd/detector/main.go cmd/detector/audit_identity.go cmd/detector/behavior_ir.go cmd/detector/evidence_context.go cmd/detector/evidence_context_test.go benchmarks/generalization/candidate.patch.gz.b64 .github/workflows/apply-generalization.yml
+          git -c user.name='skillscan validation' -c user.email='noreply@github.com' commit -m 'feat: corroborate contextual evidence and trace isolated Markdown code flows'
+          git push origin HEAD:refs/heads/improve/generalization-evidence-20260906
