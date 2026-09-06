@@ -1,0 +1,74 @@
+name: Detection regression loop
+on:
+  schedule:
+    - cron: '23 20 * * *' # Daily 04:23 Asia/Taipei; not an exact-time SLA.
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'cmd/**'
+      - 'scripts/**'
+      - 'benchmarks/continuous/**'
+      - '.github/workflows/detection-loop.yml'
+permissions:
+  contents: read
+concurrency:
+  group: detection-regression-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Read frozen baseline
+        id: policy
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re
+          ref = json.load(open('benchmarks/continuous/sources.json'))['baseline_ref']
+          assert re.fullmatch('[0-9a-f]{40}', ref)
+          print('baseline=' + ref)
+          PY
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.policy.outputs.baseline }}
+          path: .baseline
+          persist-credentials: false
+      - name: Test the evaluation contract
+        run: PYTHONPATH=scripts python3 -m unittest discover -v -s scripts -p 'test_detection_loop.py'
+      - name: Build isolated baseline and candidate scanners
+        run: |
+          bash scripts/build_detection_image.sh .baseline skillscan-baseline:loop
+          bash scripts/build_detection_image.sh . skillscan-candidate:loop
+      - name: Paired frozen-source evaluation
+        env:
+          BASELINE_REF: ${{ steps.policy.outputs.baseline }}
+        run: |
+          python3 scripts/detection_loop.py evaluate \
+            --baseline-image skillscan-baseline:loop --candidate-image skillscan-candidate:loop \
+            --baseline-ref "$BASELINE_REF" --candidate-ref "$GITHUB_SHA" \
+            --cache "$RUNNER_TEMP/detection-cache" --output detection-report
+      - name: Publish aggregate summary only
+        if: always()
+        run: |
+          if test -f detection-report/summary.md; then
+            cat detection-report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Evaluation did not complete. No promotion is permitted.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: detection-report-${{ github.run_id }}
+          path: |
+            detection-report/report.json
+            detection-report/failure.json
+            detection-report/summary.md
+          retention-days: 30
+          if-no-files-found: warn
