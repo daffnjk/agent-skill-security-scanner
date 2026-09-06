@@ -49,7 +49,7 @@ func currentScannerIdentity() ScannerIdentity {
 				}
 			}
 		}
-		identity = ScannerIdentity{Version: scannerVersion, EngineVersion: "v41-context.2", Commit: commit, RulesetHash: fmt.Sprintf("sha256:%x", h.Sum(nil)), TaxonomyVersion: legacyTaxonomyVersion}
+		identity = ScannerIdentity{Version: scannerVersion, EngineVersion: "v41-context-safe.1", Commit: commit, RulesetHash: fmt.Sprintf("sha256:%x", h.Sum(nil)), TaxonomyVersion: legacyTaxonomyVersion}
 	})
 	return identity
 }

@@ -1531,7 +1531,47 @@ func analysisText(b FileBlob) string {
 }
 
 func markdownActiveView(c string) string {
-	return activeMarkdownEvidence(c)
+	lines := strings.Split(c, "\n")
+	var out strings.Builder
+	var fence strings.Builder
+	inFence := false
+	heading := ""
+	fenceHeading := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			heading = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if !inFence {
+				inFence = true
+				fence.Reset()
+				fenceHeading = heading
+				continue
+			}
+			body := fence.String()
+			if activeMarkdownHeading(fenceHeading) || concreteRiskFence(body) {
+				out.WriteString(body)
+				out.WriteByte('\n')
+			}
+			inFence = false
+			continue
+		}
+		if inFence {
+			fence.WriteString(line)
+			fence.WriteByte('\n')
+			continue
+		}
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	if inFence {
+		body := fence.String()
+		if activeMarkdownHeading(fenceHeading) || concreteRiskFence(body) {
+			out.WriteString(body)
+		}
+	}
+	return out.String()
 }
 
 func activeMarkdownHeading(heading string) bool {
@@ -1662,15 +1702,14 @@ func mcpCommandHijack(c string, b FileBlob) bool {
 	if !mcpCfg {
 		return false
 	}
-	return nearbyEvidence(c, func(c string) bool {
-		// A normal MCP config often launches a local package and may pass a service token; do not flag that alone.
-		// Require a shell/raw-URL execution path, or a package runner tied to remote script/install behavior.
-		shellRemote := evidenceHasAny(c, []string{"bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "curl ", "wget "})
-		runnerCmd := evidenceHasAny(c, []string{"npx ", "uvx ", "pipx ", "bunx ", "pnpm dlx", "\"command\":\"npx\"", "\"command\": \"npx\"", "\"command\":\"uvx\"", "\"command\": \"uvx\"", "\"command\":\"pipx\"", "\"command\": \"pipx\""})
-		runnerRemoteInstall := runnerCmd && evidenceHasAny(c, []string{"raw.githubusercontent.com", "gist.githubusercontent.com", "http://", "https://", "postinstall", "preinstall", "curl ", "wget ", "@latest"}) && !strings.Contains(c, "@modelcontextprotocol/")
-		exfilHint := evidenceHasAny(c, []string{"webhook", "discord.com/api/webhooks", "hooks.slack.com", ".env", "id_rsa", "api_key", "secret_access_key", "authorization", "bearer "})
-		return (shellRemote && (exfilHint || evidenceHasAny(c, []string{"http://", "https://", "curl ", "wget "}))) || (runnerRemoteInstall && exfilHint)
-	})
+	// A normal MCP config often launches a local package and may pass a service token; do not flag that alone.
+	// A raw-content URL alone is a reference, not a shell execution edge.
+	// Require a shell command, or a package runner tied to remote install behavior.
+	shellRemote := hasAny(c, []string{"bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "curl ", "wget "})
+	runnerCmd := hasAny(c, []string{"npx ", "uvx ", "pipx ", "bunx ", "pnpm dlx", "\"command\":\"npx\"", "\"command\": \"npx\"", "\"command\":\"uvx\"", "\"command\": \"uvx\"", "\"command\":\"pipx\"", "\"command\": \"pipx\""})
+	runnerRemoteInstall := runnerCmd && hasAny(c, []string{"raw.githubusercontent.com", "gist.githubusercontent.com", "http://", "https://", "postinstall", "preinstall", "curl ", "wget ", "@latest"}) && !strings.Contains(c, "@modelcontextprotocol/")
+	exfilHint := hasAny(c, []string{"webhook", "discord.com/api/webhooks", "hooks.slack.com", ".env", "id_rsa", "api_key", "secret_access_key", "authorization", "bearer "})
+	return (shellRemote && (exfilHint || hasAny(c, []string{"http://", "https://", "curl ", "wget "}))) || (runnerRemoteInstall && exfilHint)
 }
 
 func hiddenPromptPayload(c string, b FileBlob) bool {
@@ -1776,11 +1815,9 @@ func conditionalOrDelayedPayload(c string, b FileBlob) bool {
 	if !(b.IsCode || b.IsMeta || strings.EqualFold(filepath.Base(b.Rel), "skill.md")) {
 		return false
 	}
-	return nearbyEvidence(c, func(c string) bool {
-		conditional := evidenceHasAny(c, []string{"time.sleep", "sleep(", "settimeout", "setinterval", "datetime.now", "time.time", "date.now", "after 24 hours", "after 48 hours", "86400", "3600", "random delay", "hostname", "os.getlogin", "process.env.user", "process.env.username", "whoami", "platform.system", "process.platform", "github_actions", "gitlab_ci", "circleci", "jenkins", "buildkite", "process.env.ci"})
-		payload := evidenceHasAny(c, []string{"id_rsa", ".ssh", ".env", "api_key", "access_token", "refresh_token", "cookie", "wallet.dat", "seed phrase", "mnemonic", "private key", "requests.post", "fetch(", "axios.", "webhook", "curl ", "wget ", "base64 -d", "eval(", "exec(", "child_process", "subprocess", "/dev/tcp/", "nc -e"})
-		return conditional && payload && gatedPayloadEvidence(c)
-	})
+	conditional := hasAny(c, []string{"time.sleep", "sleep(", "settimeout", "setinterval", "datetime.now", "time.time", "date.now", "after 24 hours", "after 48 hours", "86400", "3600", "random delay", "hostname", "os.getlogin", "process.env.user", "process.env.username", "whoami", "platform.system", "process.platform", "github_actions", "gitlab_ci", "circleci", "jenkins", "buildkite", "process.env.ci", "sandbox", "analysis", "virtualbox", "vmware", "docker", "container"})
+	payload := hasAny(c, []string{"id_rsa", ".ssh", ".env", "api_key", "access_token", "refresh_token", "cookie", "wallet.dat", "seed phrase", "mnemonic", "private key", "requests.post", "fetch(", "axios.", "webhook", "curl ", "wget ", "base64 -d", "eval(", "exec(", "child_process", "subprocess", "/dev/tcp/", "nc -e"})
+	return conditional && payload
 }
 
 func cryptoWalletExfiltration(c string, b FileBlob) bool {
@@ -1800,12 +1837,10 @@ func clickFixSocialEngineering(c string, b FileBlob) bool {
 	if !(b.IsDoc || b.IsMeta || strings.EqualFold(filepath.Base(b.Rel), "skill.md") || strings.EqualFold(filepath.Base(b.Rel), "readme.md") || strings.EqualFold(filepath.Base(b.Rel), "claude.md") || strings.EqualFold(filepath.Base(b.Rel), "agents.md")) {
 		return false
 	}
-	return nearbyEvidence(c, func(c string) bool {
-		lure := evidenceHasAny(c, []string{"verify you are human", "verify you're human", "i am not a robot", "clickfix", "captcha", "security verification", "clipboard", "copy to clipboard", "paste into terminal", "paste into powershell", "press win+r", "press ⊞", "run dialog", "terminal command", "copy and run", "run this command", "execute the following command", "must run this first", "manual verification"})
-		command := evidenceHasAny(c, []string{"powershell", "pwsh", "cmd.exe", "bash -c", "sh -c", "curl ", "curl -", "wget ", "wget -", "irm ", "iex", "iwr ", "invoke-webrequest", "invoke-expression", "python -c", "node -e", "base64 -d", "base64 --decode", "encodedcommand", "frombase64string", "certutil -decode", "mshta", "rundll32"})
-		payload := evidenceHasAny(c, []string{"| bash", "| sh", "bash <(", "sh <(", "http://", "https://", "raw.githubusercontent.com", "gist.githubusercontent.com", "pastebin.com/raw", "rentry.co/", "webhook.site", "discord.com/api/webhooks", "download", "installer", "payload", "chmod +x", "base64", "encodedcommand", "frombase64string"})
-		return lure && command && payload
-	})
+	lure := evidenceHasAny(c, []string{"verify you are human", "verify you're human", "i am not a robot", "clickfix", "captcha", "security verification", "clipboard", "copy to clipboard", "paste into terminal", "paste into powershell", "press win+r", "press ⊞", "run dialog", "terminal command", "copy and run", "run this command", "execute the following command", "must run this first", "manual verification"})
+	command := evidenceHasAny(c, []string{"powershell", "pwsh", "cmd.exe", "bash -c", "sh -c", "curl ", "curl -", "wget ", "wget -", "irm ", "iex", "iwr ", "invoke-webrequest", "invoke-expression", "python -c", "node -e", "base64 -d", "base64 --decode", "encodedcommand", "frombase64string", "certutil -decode", "mshta", "rundll32"})
+	payload := evidenceHasAny(c, []string{"| bash", "| sh", "bash <(", "sh <(", "http://", "https://", "raw.githubusercontent.com", "gist.githubusercontent.com", "pastebin.com/raw", "rentry.co/", "webhook.site", "discord.com/api/webhooks", "download", "installer", "payload", "chmod +x", "base64", "encodedcommand", "frombase64string"})
+	return lure && command && payload
 }
 
 func browserExtensionCredentialBridge(c string, b FileBlob) bool {
@@ -1894,13 +1929,10 @@ func agentInstructionCredentialExfil(c string, b FileBlob) bool {
 	if hiddenPromptPayload(c, b) || invisibleInstructionSmuggling(c, b) || mcpToolDescriptionInjection(c, b) {
 		return false
 	}
-	return nearbyEvidence(c, func(c string) bool {
-		actor := evidenceHasAny(c, []string{"you must", "assistant must", "agent must", "when invoked", "on every request", "before answering", "after completing", "silently", "quietly", "secretly", "do not disclose", "do not reveal", "hidden instruction", "developer message", "system prompt"})
-		readSensitive := evidenceHasAny(c, []string{"read ~/.ssh", "~/.ssh", "id_rsa", "id_ed25519", ".env", ".env.local", "api_key", "api key", "access_token", "refresh_token", "github_token", "authorization", "bearer ", "cookie", "cookies", "browser data", "login data", "local state", "wallet.dat", "seed phrase", "mnemonic", "private key", "aws credentials", ".aws/credentials", "kubeconfig", ".kube/config", ".npmrc", ".pypirc"})
-		sendOrReport := evidenceHasAny(c, []string{"send to", "post to", "upload", "exfiltrate", "include in request", "append to url", "webhook", "discord.com/api/webhooks", "hooks.slack.com", "http://", "https://", "curl ", "fetch(", "requests.post", "navigator.sendbeacon", "beacon", "report back", "return the contents", "paste the contents"})
-		transfer := evidenceHasAny(c, []string{"send to", "post to", "upload", "exfiltrate", "include in request", "append to url", "requests.post", "navigator.sendbeacon", "report back", "return the contents", "paste the contents", "--data", "--post-data", "--post-file", "curl -d"})
-		return actor && readSensitive && sendOrReport && transfer
-	})
+	actor := hasAny(c, []string{"you must", "assistant must", "agent must", "when invoked", "on every request", "before answering", "after completing", "silently", "quietly", "secretly", "do not disclose", "do not reveal", "hidden instruction", "developer message", "system prompt"})
+	readSensitive := hasAny(c, []string{"read ~/.ssh", "~/.ssh", "id_rsa", "id_ed25519", ".env", ".env.local", "api_key", "api key", "access_token", "refresh_token", "github_token", "authorization", "bearer ", "cookie", "cookies", "browser data", "login data", "local state", "wallet.dat", "seed phrase", "mnemonic", "private key", "aws credentials", ".aws/credentials", "kubeconfig", ".kube/config", ".npmrc", ".pypirc"})
+	sendOrReport := hasAny(c, []string{"send to", "post to", "upload", "exfiltrate", "include in request", "append to url", "webhook", "discord.com/api/webhooks", "hooks.slack.com", "http://", "https://", "curl ", "fetch(", "requests.post", "navigator.sendbeacon", "beacon", "report back", "return the contents", "paste the contents"})
+	return actor && readSensitive && sendOrReport
 }
 
 func agentIdentityFileWrite(c string, b FileBlob) bool {
@@ -2094,13 +2126,11 @@ func markdownOpaqueBinaryDownload(c string, b FileBlob) bool {
 	if !isSkillFacingMaterial(b) {
 		return false
 	}
-	return nearbyEvidence(c, func(c string) bool {
-		remote := evidenceHasAny(c, []string{"curl ", "wget ", "invoke-webrequest", "downloadfile(", "releases/download", "dist.example", "build.example"})
-		binary := evidenceHasAny(c, []string{".bin", ".exe", ".dmg", ".pkg", ".msi", ".app", "/usr/local/bin/", "~/.local/bin/", "~/.cache/", "/tmp/."})
-		makeExecutable := evidenceHasAny(c, []string{"chmod +x", "chmod 755", "install -m 755", "start-process", "./", " --daemon", "exec "})
-		integrity := evidenceHasAny(c, []string{"sha256", "sha512", "shasum", "checksum", "gpg --verify", "cosign verify", "minisign", "signature verification"})
-		return remote && binary && makeExecutable && !integrity
-	})
+	remote := hasAny(c, []string{"curl ", "wget ", "invoke-webrequest", "downloadfile(", "releases/download", "dist.example", "build.example"})
+	binary := hasAny(c, []string{".bin", ".exe", ".dmg", ".pkg", ".msi", ".app", "/usr/local/bin/", "~/.local/bin/", "~/.cache/", "/tmp/."})
+	makeExecutable := hasAny(c, []string{"chmod +x", "chmod 755", "install -m 755", "start-process", "./", " --daemon", "exec "})
+	integrity := hasAny(c, []string{"sha256", "sha512", "shasum", "checksum", "gpg --verify", "cosign verify", "minisign", "signature verification"})
+	return remote && binary && makeExecutable && !integrity
 }
 
 func rsaModularExecutionPayload(c string, b FileBlob) bool {
@@ -2133,8 +2163,7 @@ func startupPersistencePayload(c string, b FileBlob) bool {
 	startupPath := strings.HasSuffix(rel, ".plist") || strings.HasSuffix(rel, ".service") || strings.HasSuffix(rel, ".timer") || strings.HasSuffix(rel, ".desktop") || strings.HasSuffix(rel, ".reg") || strings.Contains(rel, "launchagents") || strings.Contains(rel, "launchdaemons") || strings.Contains(rel, "systemd") || strings.Contains(rel, "cron") || strings.Contains(rel, "startup")
 	startupContent := evidenceHasAny(c, []string{"runatload", "keepalive", "execstart", "wantedby=", "onbootsec", "@reboot", "schtasks", "runonce", "startup", "launchctl", "programarguments", "cron"})
 	payload := evidenceHasAny(c, []string{"curl ", "wget ", "http://", "https://", "bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "webhook", "socket", "base64", "eval(", "exec("})
-	launch := evidenceHasAny(c, []string{"execstart", "programarguments", "@reboot", "schtasks", "launchctl", "crontab", "runonce", "reg add", "bash -c", "sh -c", "powershell", "python -c", "node -e"})
-	return startupContent && payload && (startupPath || launch)
+	return (startupPath || startupContent) && startupContent && payload
 }
 
 func microInstallRemoteExec(c string, b FileBlob) bool {
