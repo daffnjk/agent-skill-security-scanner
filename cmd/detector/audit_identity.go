@@ -18,7 +18,7 @@ var buildCommit = "unknown"
 // This fingerprints the actual compiled rule/collection source, not a manually
 // maintained version label. Tests and documentation are deliberately excluded.
 //
-//go:embed main.go hardening.go behavior_ir.go analysis_metadata.go audit_identity.go coverage.go external_instructions.go security_boundaries.go scan_cli.go
+//go:embed evidence_context.go main.go hardening.go behavior_ir.go analysis_metadata.go audit_identity.go coverage.go external_instructions.go security_boundaries.go scan_cli.go
 var scannerSources embed.FS
 
 type ScannerIdentity struct {
@@ -49,7 +49,7 @@ func currentScannerIdentity() ScannerIdentity {
 				}
 			}
 		}
-		identity = ScannerIdentity{Version: scannerVersion, EngineVersion: "v41-hardening.1", Commit: commit, RulesetHash: fmt.Sprintf("sha256:%x", h.Sum(nil)), TaxonomyVersion: legacyTaxonomyVersion}
+		identity = ScannerIdentity{Version: scannerVersion, EngineVersion: "v41-context-safe.1", Commit: commit, RulesetHash: fmt.Sprintf("sha256:%x", h.Sum(nil)), TaxonomyVersion: legacyTaxonomyVersion}
 	})
 	return identity
 }

@@ -1,0 +1,21 @@
+{
+  "frozen_at_utc": "2026-09-06T04:28:26.422921+00:00",
+  "baseline_commit": "9a69854cbcbd1dd2d092f2f3ec0409ed50868932",
+  "engine": "v41-context-safe.1",
+  "selected": "minimal",
+  "selection_status": "Only one preregistered ablation met per-source TP/FP/incompleteness constraints in strict and screening modes.",
+  "selection_corpus_sha256": "a688ffff1dec611bd5b422d4f90d1f42cf14b974befed0fd40419b8e9f21cdab",
+  "scanner_source_sha256": {
+    "cmd/detector/analysis_metadata.go": "ee4ab9543bb527e954f0bca087d79495296de6e7f364cedb949bbe941f9e967c",
+    "cmd/detector/audit_identity.go": "7976a65051fc8faf074e04a3438d1bbc8e8e6bb2007fff86b2d90caa6c876970",
+    "cmd/detector/behavior_ir.go": "be69436748b4b5a65144d6bd3aaaccb50efa794a0004cc75f4ecd051d19af04e",
+    "cmd/detector/coverage.go": "75af6426c5e3ef699c8f027144ad55f67db28bfb072df260e41d2b1ed315a92f",
+    "cmd/detector/evidence_context.go": "970d03ab6ab492c01fe1a1f9b3c689b9fc3952e279446585dee7ee81c37c9180",
+    "cmd/detector/external_instructions.go": "de1e8b5ff24313c232e03bb1a517c14850de3ffc045364d0cee17c744e56ab34",
+    "cmd/detector/hardening.go": "6f6392b6ff5d7b9f7dce3b42403134f10635e4b464dd63fd05ccbdb1d04944d1",
+    "cmd/detector/main.go": "6a1160633480fe03a0fc294e06d3b56b9275852d37ffb7b3198e902ff4ae92f4",
+    "cmd/detector/scan_cli.go": "f27638b4e9adbb3ff4bfdd640d74314e71ac87b1648f7a59b28d84f2cc231c1c",
+    "cmd/detector/security_boundaries.go": "690f9c4788d8063c6d8107f5a76f7bb3637aaac87c91c0e82b11df3e1a8cf10e"
+  },
+  "external_protocol": "SkillTrustBench: exclude transitive exact/word-trigram cosine>=0.90/repository overlap with all 2495 selection records; group external cases by same criteria; one SHA256-ID-ranked representative per group BEFORE examining its label; take up to 300 group-hash-ranked malicious and 300 normal representatives. Suspicious representatives excluded from binary scoring, not relabeled. Freeze external IDs and hashes before scoring. No source changes after opening external outcomes."
+}
