@@ -1,0 +1,20 @@
+{
+  "frozen_at_utc": "2026-09-06T04:08:08.122609+00:00",
+  "baseline_commit": "9a69854cbcbd1dd2d092f2f3ec0409ed50868932",
+  "candidate_engine": "v41-context.2",
+  "manifest_sha256": "24ae1d054adc0bf1708aadf2b4d34037c08016eaaea57b18fc92451a274e5879",
+  "patch_sha256": "9d3fb523e41e3496fc2a4d479d5120d65f349306fe0b33ac5d2c6a790e2a78d5",
+  "scanner_source_sha256": {
+    "cmd/detector/analysis_metadata.go": "ee4ab9543bb527e954f0bca087d79495296de6e7f364cedb949bbe941f9e967c",
+    "cmd/detector/audit_identity.go": "6eb9296612cef143cc03276acd345e3f55c81e6b9fb9b974b05c86b073461172",
+    "cmd/detector/behavior_ir.go": "b9a754690f638225e7c00a8fb4dd28d98fcfe9620753483f862353a808ce000f",
+    "cmd/detector/coverage.go": "75af6426c5e3ef699c8f027144ad55f67db28bfb072df260e41d2b1ed315a92f",
+    "cmd/detector/evidence_context.go": "da0928819f03ea9020ad587962ab90f87b06ee337257e0c5b231698de0e309a1",
+    "cmd/detector/external_instructions.go": "de1e8b5ff24313c232e03bb1a517c14850de3ffc045364d0cee17c744e56ab34",
+    "cmd/detector/hardening.go": "6f6392b6ff5d7b9f7dce3b42403134f10635e4b464dd63fd05ccbdb1d04944d1",
+    "cmd/detector/main.go": "dff79beb83f2a5508429172349d7727cac4f67a3ca93d6c183e16380f7728954",
+    "cmd/detector/scan_cli.go": "f27638b4e9adbb3ff4bfdd640d74314e71ac87b1648f7a59b28d84f2cc231c1c",
+    "cmd/detector/security_boundaries.go": "690f9c4788d8063c6d8107f5a76f7bb3637aaac87c91c0e82b11df3e1a8cf10e"
+  },
+  "status": "frozen before opening any holdout outcomes; development TP82 FP2 TN146 FN2"
+}
