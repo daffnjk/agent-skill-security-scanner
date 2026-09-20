@@ -1,8 +1,6 @@
-> **Current boundary contract:** [hardening.md](hardening.md) supersedes the v41 input-discovery, sampling, report-writing and gate behavior described below. Historical rule-category meanings remain unchanged.
-
 # Scanner design
 
-This document describes the current `main` branch design (v41). Historical
+This document describes the current `main` branch design (`v0.3.0-dev` / `v41-hardening.1`). Historical
 competition behavior is frozen on the
 [`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
 branch; version-to-version release details belong in [`CHANGELOG.md`](../CHANGELOG.md).
@@ -20,7 +18,7 @@ The design prioritizes:
 - deterministic results for the same scanner build and input;
 - explicit scan-completeness reporting instead of fail-open `benign` results;
 - a stable, minimal result contract for downstream integrations; and
-- category-specific evidence that maps non-benign results to AST01-AST10.
+- category-specific evidence in the versioned `skillscan-legacy-v41` taxonomy.
 
 The scanner is a triage tool, not a proof of safety. A `benign` verdict means that
 the inspected content did not reach the configured risk thresholds; it does not
@@ -81,7 +79,8 @@ scan-completeness enforcement
     |
     +--> results.jsonl
     +--> scan-metadata.jsonl
-    `--> analysis-metadata.jsonl
+    +--> analysis-metadata.jsonl
+    `--> scan-complete.json (written last)
 ```
 
 The implementation still uses historical `v25` and `v26` names for the base and
@@ -94,10 +93,17 @@ The first positional argument selects the input directory and the second selects
 the output directory. `SKILLS_DIR` and `OUTPUT_DIR` are fallbacks; the container
 defaults are `/data/skills` and `/output`.
 
-Each visible first-level directory under the input root is treated as one Skill.
-If the root contains no visible child directory, the root itself is scanned as a
-single Skill. Skills and retained file paths are sorted before analysis so file
-system enumeration order cannot change the result.
+Flags precede positional paths. `--single` scans the entire root as one Skill;
+`--collection` scans visible immediate directories and rejects an empty collection.
+Default `--mode auto` treats a root with `SKILL.md` as a single Skill, even when
+it contains subdirectories. Otherwise it discovers a collection, falling back to
+the root if no visible child directories or symlinks exist. Discovered symlinks
+are recorded as incomplete targets, never followed. Skill and retained-file
+ordering is stable.
+
+Input and output must be disjoint after path canonicalization. The default `5m`
+deadline covers discovery and analysis after output preparation. See
+[hardening.md](hardening.md) for filesystem assumptions and the complete limit table.
 
 ## Bounded collection
 
@@ -116,8 +122,9 @@ Current per-profile limits are:
 - 24 MiB retained text per Skill profile; and
 - 4,096 retained blobs per Skill profile.
 
-Files larger than 1 MiB are sampled from both head and tail. A successfully
-sampled text file is recorded but does not by itself make the scan incomplete.
+Files larger than 1 MiB are sampled from both head and tail. Sampling sets
+content coverage to incomplete and prevents a benign result,
+even when the retained head and tail are readable.
 UTF-8-like text and UTF-16LE/UTF-16BE text are decoded before matching. Known
 executable paths receive bounded magic-byte perimeter inspection; opaque content
 is not treated as if its behavior had been analyzed.
@@ -131,7 +138,10 @@ and `strong` flag. Cross-file rules then correlate behavior that is split across
 manifests, code, lifecycle files, browser extensions, remote loaders, local
 control endpoints, and security metadata.
 
-The rules cover the following primary categories:
+The historical `skillscan-legacy-v41` taxonomy uses the categories below. These
+are not a blanket claim of conformance to an unversioned OWASP draft. External
+instruction annotations use a separate observed draft mapping, documented in
+[hardening.md](hardening.md).
 
 | Category | Primary risk represented by this scanner |
 | --- | --- |
@@ -223,7 +233,11 @@ test fixtures are also excluded from explain-profile promotion.
 
 Completeness is independent of the classification score. The scanner records
 visited, analyzed, skipped, sampled, unreadable, symlinked, opaque, and truncated
-input counts for each Skill.
+input counts for each Skill. Schema-v2 metadata separates collection, content,
+and analysis coverage. Sampling, bounded-analysis truncation, and detected
+unreviewed external instruction delegation make coverage incomplete. URLs are
+inventoried offline; they are never fetched, and ordinary references alone do
+not imply maliciousness.
 
 If a scan is incomplete:
 
@@ -239,26 +253,31 @@ treats an incomplete scan as a gate failure.
 
 ## Output contracts
 
-The scanner writes three JSONL files to the selected output directory:
+The scanner writes three JSONL reports and a final report seal:
 
 | File | Contract |
 | --- | --- |
 | `results.jsonl` | Stable integration output with exactly `skill_id`, `verdict`, `engine_category`, and `evidence_text` |
 | `scan-metadata.jsonl` | Completeness, resource accounting, skipped-input counts, and bounded error samples |
-| `analysis-metadata.jsonl` | Trigger layer, score, condition, rule IDs, category scores, and explain-only context |
+| `analysis-metadata.jsonl` | Trigger layer, scores, stable rule IDs, available statement locations, scanner identity, scoped input digest, and external dependencies |
+| `scan-complete.json` | Run ID, exact Skill count, and SHA-256 hashes of the three reports |
 
 Separating operational and analytical metadata keeps the four-field ranking
 contract stable while retaining enough detail to audit false positives and missed
 behavior chains. Non-benign evidence starts with an explicit `OWASP ASTxx` prefix.
 
-Each output is first written to a same-directory temporary file and committed by
-rename where supported. A conservative fallback still writes a complete JSONL
-file on filesystems with unusual replacement semantics.
+Each report is written to an exclusive randomized temporary file, flushed and
+synced, then renamed. The previous seal is invalidated before scanning and the
+new seal is written last. Consumers must validate hashes, matching run and Skill
+IDs, schema, and complete coverage before applying risk policy. A seal can exist
+for an incomplete scan; its presence alone is insufficient. Checksums are not
+signatures and do not protect against an actor able to replace the reports and
+seal together. Output parents must be trusted.
 
 Process exit codes are:
 
 - `0`: the scan completed;
-- `2`: startup, input, or output failure; and
+- `2`: usage, input/output, discovery, or deadline failure; and
 - `3`: at least one Skill scan was incomplete.
 
 Finding a `suspicious` or `malicious` Skill does not by itself change the CLI exit
@@ -266,14 +285,16 @@ code. Policy gating belongs to the GitHub Action or another caller.
 
 ## Determinism, deployment, and dependencies
 
-Determinism is provided by sorted Skill/file traversal, stable category priority,
-bounded evidence selection, and the absence of time-, randomness-, network-, or
-model-dependent decisions. For the same binary, input bytes, arguments, and
-environment policy, output is expected to be identical.
+Classification uses sorted traversal, stable category priority, and bounded
+evidence selection. For the same build, inspected input, and environment policy,
+completed classification results are expected to be deterministic. Audit files
+and seals contain a random run ID, so the complete report bundle is not
+byte-identical across runs. Deadlines and filesystem failures can affect coverage.
 
-The detector uses the Go standard library only. The runtime image is BusyBox,
-runs as `USER 1000`, and contains no package manager or model weights. The scanner
-does not need network access at runtime.
+The detector uses the Go standard library only. The `scratch` runtime runs as
+`USER 1000` and contains no shell, package manager, or model weights. Scanning
+requires no network access. CI, Action, and Docker currently pin Go 1.27.1;
+`go.mod` retains a Go 1.23 source-language floor.
 
 ## Validation and change policy
 
@@ -286,7 +307,7 @@ ordering cases are specifically protected against regression.
 Public evaluations use frozen dataset revisions and report each dataset
 separately because their labels and samples may overlap. Dataset names, sample
 IDs, and benchmark-specific allowlists must not appear in detection rules. See
-[`benchmarks/v41`](../benchmarks/v41/README.md) for the current public evidence and
+[`benchmarks/v41`](../benchmarks/v41/README.md) for historical v41 public evidence (not a rerun of the current engine) and
 [`SELFTEST.md`](../SELFTEST.md) for portable regression coverage.
 
 ## Historical evolution
@@ -305,6 +326,9 @@ IDs, and benchmark-specific allowlists must not appear in detection rules. See
 - **v41:** integrated the relation layer with fail-closed collection, executable
   perimeter inspection, analysis metadata, regression calibration, and the GitHub
   pull-request gate.
+- **v41-hardening.1 (unreleased):** adds explicit input modes, strict content and
+  analysis coverage, sealed reports, stable rule IDs, scanner identity, and offline
+  external instruction inventory. Public benchmarks have not been rerun.
 
 For release details and competition provenance, see [`CHANGELOG.md`](../CHANGELOG.md)
 and [`docs/competition.md`](competition.md).

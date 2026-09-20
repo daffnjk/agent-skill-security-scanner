@@ -1,8 +1,8 @@
 name: Agent Skill Security Scanner
-description: Offline Skill scanning with mandatory completeness and report-integrity checks.
+description: Offline static security scanning for AI Agent Skills, with risk evidence and mandatory coverage and report-integrity gates.
 inputs:
   path:
-    description: Workspace-relative Skill or collection directory.
+    description: Workspace-relative directory containing one complete Skill or a collection; target code is never executed.
     required: false
     default: skills
   mode:
@@ -14,7 +14,7 @@ inputs:
     required: false
     default: .skillscan
   timeout:
-    description: Whole-run deadline (Go duration, for example 5m).
+    description: Discovery and scan deadline after output preparation (Go duration, for example 5m).
     required: false
     default: 5m
   fail_on:
