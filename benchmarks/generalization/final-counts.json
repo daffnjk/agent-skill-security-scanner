@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "status": "EXTERNAL_NONREGRESSION_FAILED_DO_NOT_MERGE",
+  "date": "2026-09-06",
+  "baseline_commit": "9a69854cbcbd1dd2d092f2f3ec0409ed50868932",
+  "candidate_source_commit": "b201c6a44bda8ac6d5747cba6ead96ea07dce62b",
+  "candidate_engine": "v41-context-safe.1",
+  "count_order": ["tp", "fp", "tn", "fn"],
+  "strict_positive": ["malicious"],
+  "screening_positive": ["malicious", "suspicious"],
+  "sources": [
+    {"dataset": "agent_skill_malware", "role": "selection_regression", "n": 347, "incomplete_baseline": 28, "incomplete_candidate": 28, "strict": {"baseline": [121, 12, 211, 3], "candidate": [121, 10, 213, 3]}, "screening": {"baseline": [121, 37, 186, 3], "candidate": [121, 36, 187, 3]}},
+    {"dataset": "atr_skill_benchmark", "role": "selection_regression", "n": 498, "incomplete_baseline": 4, "incomplete_candidate": 4, "strict": {"baseline": [17, 54, 412, 15], "candidate": [17, 53, 413, 15]}, "screening": {"baseline": [20, 162, 304, 12], "candidate": [20, 161, 305, 12]}},
+    {"dataset": "skillbench_1650", "role": "selection_regression", "n": 1650, "incomplete_baseline": 2, "incomplete_candidate": 2, "materialization_warnings": 8, "strict": {"baseline": [140, 218, 1282, 10], "candidate": [140, 217, 1283, 10]}, "screening": {"baseline": [141, 422, 1078, 9], "candidate": [141, 421, 1079, 9]}},
+    {"dataset": "skilltrustbench_external", "role": "external_frozen_representative_subset", "n": 600, "incomplete_baseline": 15, "incomplete_candidate": 15, "strict": {"baseline": [272, 120, 180, 28], "candidate": [270, 119, 181, 30]}, "screening": {"baseline": [290, 164, 136, 10], "candidate": [288, 163, 137, 12]}}
+  ],
+  "gates": {"selection_regression": "pass", "external_strict": "fail", "external_screening": "fail"},
+  "bootstrap_external": {"seed": 20260906, "repetitions": 2000, "groups": 600, "confidence": 0.95, "strict_recall_delta": [-0.01689332340815391, 0.0], "strict_f2_delta": [-0.013127923917764467, 0.0015868855508976664], "interpretation": "Intervals include zero. No statistically significant improvement is claimed. Observed nonregression gate still fails."},
+  "wall_seconds_single_run": {"selection_baseline": 52.345122561999915, "selection_candidate": 54.93829742099979, "external_baseline": 35.26836570500018, "external_candidate": 32.47296558300013},
+  "runtime_caveat": "Not a repeated, order-balanced performance experiment. Core final run overlapped other work; no performance improvement claim.",
+  "manifest_sha256": {"selection": "24ae1d054adc0bf1708aadf2b4d34037c08016eaaea57b18fc92451a274e5879", "external": "055cf66e15e16734e7ca73c3c1e79bb01948718585b22ca9f4e7afd36308c5d7"},
+  "binary_sha256": {"baseline": "3aff66013ab235e1b10fac632d57391278e646330649d969a15c642633411d59", "candidate": "c344fe30eb2442839e54ad84d7513a7730127dd7ee8985b27ac2f961a578423e"}
+}

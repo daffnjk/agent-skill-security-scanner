@@ -1,0 +1,18 @@
+{
+  "source": "cuhk-zhuque/SkillTrustBench",
+  "upstream_revision": "f90517b7058fdcfea89af114c069fbf973f42bc7",
+  "archive_sha256": "a1970087675a6991788c2624eb6101b72445a7c56b3e1720bd2b97f0add6622f",
+  "license": "CC-BY-NC-SA-4.0",
+  "external_records": 5520,
+  "overlap_excluded": 97,
+  "untainted_components": 1946,
+  "representative_labels": {"malicious": 973, "normal": 635, "suspicious": 338},
+  "selected": 600,
+  "selected_labels": {"malicious": 300, "normal": 300},
+  "manifest_sha256": "055cf66e15e16734e7ca73c3c1e79bb01948718585b22ca9f4e7afd36308c5d7",
+  "corpus_sha256": "3221aa3de76e417eb6646bb89e46bf09ea695f50961f679a029c02bed0ba0bbd",
+  "materialized_bytes": 31850576,
+  "grouping_decode_warning_ids": ["case_01683"],
+  "materialization_notes": "Original package bytes and relative POSIX paths are preserved, including compact:before directory names. Replacement decoding is used only for similarity grouping of the one non-UTF-8 document, never for scanner input. Suspicious representatives are excluded from binary evaluation, not relabeled. The manifest hashes bind all selected IDs, labels and groups before scanner outcomes.",
+  "status": "frozen before external scoring; final scanner hashes are in FINAL_FREEZE.json; no detector changes permitted after scoring"
+}

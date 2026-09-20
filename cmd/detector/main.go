@@ -1703,8 +1703,9 @@ func mcpCommandHijack(c string, b FileBlob) bool {
 		return false
 	}
 	// A normal MCP config often launches a local package and may pass a service token; do not flag that alone.
-	// Require a shell/raw-URL execution path, or a package runner tied to remote script/install behavior.
-	shellRemote := hasAny(c, []string{"bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "curl ", "wget ", "raw.githubusercontent.com", "gist.githubusercontent.com", "pastebin.com/raw"})
+	// A raw-content URL alone is a reference, not a shell execution edge.
+	// Require a shell command, or a package runner tied to remote install behavior.
+	shellRemote := hasAny(c, []string{"bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "curl ", "wget "})
 	runnerCmd := hasAny(c, []string{"npx ", "uvx ", "pipx ", "bunx ", "pnpm dlx", "\"command\":\"npx\"", "\"command\": \"npx\"", "\"command\":\"uvx\"", "\"command\": \"uvx\"", "\"command\":\"pipx\"", "\"command\": \"pipx\""})
 	runnerRemoteInstall := runnerCmd && hasAny(c, []string{"raw.githubusercontent.com", "gist.githubusercontent.com", "http://", "https://", "postinstall", "preinstall", "curl ", "wget ", "@latest"}) && !strings.Contains(c, "@modelcontextprotocol/")
 	exfilHint := hasAny(c, []string{"webhook", "discord.com/api/webhooks", "hooks.slack.com", ".env", "id_rsa", "api_key", "secret_access_key", "authorization", "bearer "})
@@ -1836,9 +1837,9 @@ func clickFixSocialEngineering(c string, b FileBlob) bool {
 	if !(b.IsDoc || b.IsMeta || strings.EqualFold(filepath.Base(b.Rel), "skill.md") || strings.EqualFold(filepath.Base(b.Rel), "readme.md") || strings.EqualFold(filepath.Base(b.Rel), "claude.md") || strings.EqualFold(filepath.Base(b.Rel), "agents.md")) {
 		return false
 	}
-	lure := hasAny(c, []string{"verify you are human", "verify you're human", "i am not a robot", "clickfix", "captcha", "security verification", "clipboard", "copy to clipboard", "paste into terminal", "paste into powershell", "press win+r", "press ⊞", "run dialog", "terminal command", "copy and run", "run this command", "execute the following command", "must run this first", "manual verification"})
-	command := hasAny(c, []string{"powershell", "pwsh", "cmd.exe", "bash -c", "sh -c", "curl ", "curl -", "wget ", "wget -", "irm ", "iex", "iwr ", "invoke-webrequest", "invoke-expression", "python -c", "node -e", "base64 -d", "base64 --decode", "encodedcommand", "frombase64string", "certutil -decode", "mshta", "rundll32"})
-	payload := hasAny(c, []string{"| bash", "| sh", "bash <(", "sh <(", "http://", "https://", "raw.githubusercontent.com", "gist.githubusercontent.com", "pastebin.com/raw", "rentry.co/", "webhook.site", "discord.com/api/webhooks", "download", "installer", "payload", "chmod +x", "base64", "encodedcommand", "frombase64string"})
+	lure := evidenceHasAny(c, []string{"verify you are human", "verify you're human", "i am not a robot", "clickfix", "captcha", "security verification", "clipboard", "copy to clipboard", "paste into terminal", "paste into powershell", "press win+r", "press ⊞", "run dialog", "terminal command", "copy and run", "run this command", "execute the following command", "must run this first", "manual verification"})
+	command := evidenceHasAny(c, []string{"powershell", "pwsh", "cmd.exe", "bash -c", "sh -c", "curl ", "curl -", "wget ", "wget -", "irm ", "iex", "iwr ", "invoke-webrequest", "invoke-expression", "python -c", "node -e", "base64 -d", "base64 --decode", "encodedcommand", "frombase64string", "certutil -decode", "mshta", "rundll32"})
+	payload := evidenceHasAny(c, []string{"| bash", "| sh", "bash <(", "sh <(", "http://", "https://", "raw.githubusercontent.com", "gist.githubusercontent.com", "pastebin.com/raw", "rentry.co/", "webhook.site", "discord.com/api/webhooks", "download", "installer", "payload", "chmod +x", "base64", "encodedcommand", "frombase64string"})
 	return lure && command && payload
 }
 
@@ -2160,8 +2161,8 @@ func startupPersistencePayload(c string, b FileBlob) bool {
 	}
 	rel := strings.ToLower(b.Rel)
 	startupPath := strings.HasSuffix(rel, ".plist") || strings.HasSuffix(rel, ".service") || strings.HasSuffix(rel, ".timer") || strings.HasSuffix(rel, ".desktop") || strings.HasSuffix(rel, ".reg") || strings.Contains(rel, "launchagents") || strings.Contains(rel, "launchdaemons") || strings.Contains(rel, "systemd") || strings.Contains(rel, "cron") || strings.Contains(rel, "startup")
-	startupContent := hasAny(c, []string{"runatload", "keepalive", "execstart", "wantedby=", "onbootsec", "@reboot", "schtasks", "runonce", "startup", "launchctl", "programarguments", "cron"})
-	payload := hasAny(c, []string{"curl ", "wget ", "http://", "https://", "bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "webhook", "socket", "base64", "eval(", "exec("})
+	startupContent := evidenceHasAny(c, []string{"runatload", "keepalive", "execstart", "wantedby=", "onbootsec", "@reboot", "schtasks", "runonce", "startup", "launchctl", "programarguments", "cron"})
+	payload := evidenceHasAny(c, []string{"curl ", "wget ", "http://", "https://", "bash -c", "sh -c", "powershell", "cmd.exe", "python -c", "node -e", "webhook", "socket", "base64", "eval(", "exec("})
 	return (startupPath || startupContent) && startupContent && payload
 }
 
