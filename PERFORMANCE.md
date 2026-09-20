@@ -1,23 +1,51 @@
 # Performance and resource limits
 
-`skillscan` is a single Go binary with no third-party module dependencies, external API calls, or model weights.
+`skillscan` uses the Go standard library, with no model weights or external API
+calls during scanning. This page describes `v0.3.0-dev` / `v41-hardening.1`.
 
-The scanner applies these bounds per skill directory:
+## Current limits
 
-- At most 1 MiB sampled per text-like file, using head and tail content.
-- At most 24 MiB of retained text across the skill tree.
-- At most 4,096 retained file blobs.
-- Binary files, archives, dependency directories, and common caches are skipped.
+| Scope | Limit |
+| --- | --- |
+| Retained text per file | 1 MiB, sampled from head and tail when larger |
+| Retained text / blobs per Skill profile | 24 MiB / 4,096 blobs; base and explain profiles have separate budgets |
+| Visited entries / depth per Skill | 100,000 / 64 |
+| Skills / discovery entries per collection | 4,096 / 100,000 |
+| Aggregate visited entries per collection | 1,000,000 |
+| Behavior analysis per file | 12,000 statements; 32,768 bytes per statement |
+| External URL inventory | 256 records per document; 1,024 per Skill |
+| Each report | 32 MiB |
+| Discovery and scan deadline | `5m` by default; configurable with `--timeout` |
 
-The original v38 benchmark scanned a focused synthetic corpus of 4,000 skills in approximately 3.8 seconds with about 21.5 MiB maximum RSS. That number is historical and hardware-specific; run a local benchmark for deployment decisions.
+These bound retained data and work; they are not a whole-process RSS or CPU
+quota. The deadline starts after output preparation. Use deployment-level
+resource limits and job/container deadlines for those additional bounds.
+
+## Completeness semantics
+
+Security-sensitive manifests, lifecycle files, CI/project configuration, and
+source code receive priority over ordinary documents. Sampling, budget-driven
+truncation, supported-file read failures, symlinks, opaque executables/archives,
+and unreviewed external instruction delegation make coverage incomplete.
+An incomplete scan cannot retain a benign verdict and normally exits with `3`;
+discovery, deadline, and report-writing failures exit with `2`.
+
+Excluded dependency/cache directories and unsupported ordinary formats remain
+outside coverage. Binary perimeter inspection does not analyze binary behavior,
+and archives are not unpacked. Review coverage and validate all reports with
+`scan-complete.json` before applying a gate. See [hardening.md](docs/hardening.md)
+for detailed limits and trust assumptions.
+
+## Historical benchmark
+
+The original v38 benchmark scanned a focused synthetic corpus of 4,000 Skills
+in approximately 3.8 seconds with about 21.5 MiB maximum RSS. These are historical,
+hardware-specific measurements, not current-engine performance guarantees.
+Record the scanner commit, toolchain, hardware, dataset, coverage, elapsed time,
+and peak RSS when measuring deployment performance.
 
 Build a stripped Linux binary with:
 
 ```bash
 make release
 ```
-
-
-## Completeness semantics
-
-Security-sensitive metadata, package lifecycle files, CI/project configuration, and source code are prioritized before ordinary documentation consumes the bounded per-Skill budget. Reaching a byte/file budget, failing to read a supported file, or skipping a symlink or opaque executable/archive is recorded in `scan-metadata.jsonl`; strict mode exits with status 3 rather than treating the scan as a successful benign result. Oversized text files that are successfully head/tail sampled are counted in metadata but do not alone make the scan incomplete.

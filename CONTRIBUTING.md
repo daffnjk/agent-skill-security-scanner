@@ -11,13 +11,26 @@ Thanks for helping improve Agent Skill Security Scanner.
 
 ## Local checks
 
-Requires Go 1.23 or newer.
+Requires Go and Python 3. The source language floor is Go 1.23; CI currently
+pins Go 1.27.1. For routine changes, run:
 
 ```bash
-go fmt ./...
-go test ./...
-bash scripts/selftest.sh
+make verify
 ```
+
+For report, gate, or boundary changes, also run the complete Python suite with
+the real CLI, as CI does:
+
+```bash
+make build
+SKILLSCAN_BIN="$PWD/skillscan" PYTHONPATH=scripts python3 -m unittest discover -v -s scripts -p 'test_*.py'
+```
+
+Keep Chinese and English READMEs aligned. Distinguish release versions from
+engine versions, preserve historical benchmark provenance, and document any
+changes to input modes, completeness, report schemas, or Action inputs. Retain
+existing `SKILL-Rnnnn` rule IDs when editing evidence wording. See
+[the migration contract](docs/hardening.md) for identity and taxonomy rules.
 
 Pull requests should explain the risk being detected, expected category and verdict, false-positive controls, and any performance impact.
 

@@ -1,3 +1,7 @@
+# Changelog
+
+All notable public changes are documented here.
+
 ## Unreleased — v0.3.0-dev / v41-hardening.1
 
 - Enforce independent complete-scan validation and sealed, run-bound reports in GitHub Action.
@@ -10,12 +14,7 @@
 - Upgrade production Go to 1.27.1, pin the builder digest, and remove the runtime shell via scratch.
 - Add end-to-end regressions and strict/screening benchmark comparison with source/attack/split breakdowns.
 - Public benchmark datasets have NOT been rerun for this change.
-
-# Changelog
-
-All notable public changes are documented here.
-
-## Unreleased
+- Align bilingual project descriptions, CLI/Action examples, report validation, resource limits, and version/benchmark boundaries with the current implementation.
 
 ## 0.2.0 - 2026-09-03
 
