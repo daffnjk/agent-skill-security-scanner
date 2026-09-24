@@ -21,7 +21,7 @@ All notable public changes are documented here.
 - Integrate the v Generalized Context Flow engine on top of the hardened public mainline, including bounded behavior-flow verification and context-aware Markdown, credential, update, plugin, and PII rules.
 - Preserve the stable four-field `results.jsonl` contract and move v trigger scores, rule IDs, and secondary explanations into `analysis-metadata.jsonl`.
 - Preserve fail-closed input handling and scan-completeness reporting while adding bounded executable-binary perimeter inspection.
-- Add malicious and benign counterexample tests for v41 rules, including HTML-comment scope, verified artifact execution, provider-matched authentication, safe YAML loading, and privacy-evasion context.
+- Add malicious and benign counterexample tests for v rules, including HTML-comment scope, verified artifact execution, provider-matched authentication, safe YAML loading, and privacy-evasion context.
 - Add a reusable GitHub composite Action that scans complete Skill directories, fails closed on incomplete scans, and supports configurable malicious/suspicious merge gates.
 
 - Change the current `main` branch license from MIT to GNU AGPLv3 (`AGPL-3.0-only`), with separate commercial licensing available, and add contribution licensing terms. The frozen competition snapshot remains unchanged.
