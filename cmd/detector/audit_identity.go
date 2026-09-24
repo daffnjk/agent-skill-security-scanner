@@ -10,7 +10,7 @@ import (
 )
 
 const externalTaxonomyVersion = "owasp-ast-v1-public-review-observed-2026-09-05"
-const legacyTaxonomyVersion = "skillscan-legacy-v41"
+const legacyTaxonomyVersion = "skillscan-legacy-v"
 
 var scannerVersion = "v0.3.0-dev"
 var buildCommit = "unknown"
@@ -49,7 +49,7 @@ func currentScannerIdentity() ScannerIdentity {
 				}
 			}
 		}
-		identity = ScannerIdentity{Version: scannerVersion, EngineVersion: "v41-hardening.1", Commit: commit, RulesetHash: fmt.Sprintf("sha256:%x", h.Sum(nil)), TaxonomyVersion: legacyTaxonomyVersion}
+		identity = ScannerIdentity{Version: scannerVersion, EngineVersion: "v", Commit: commit, RulesetHash: fmt.Sprintf("sha256:%x", h.Sum(nil)), TaxonomyVersion: legacyTaxonomyVersion}
 	})
 	return identity
 }
