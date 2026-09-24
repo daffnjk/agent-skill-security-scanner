@@ -19,11 +19,11 @@
 
 | 版本 | 状态 | 使用说明 |
 | --- | --- | --- |
-| `main`：`v0.3.0-dev` / `v41-hardening.1` | 未发布开发版 | 本页命令、输入模式和报告校验说明对应此版本 |
-| `v0.2.0` / `v41` | 已发布 | 使用 [该版本文档](https://github.com/daffnjk/agent-skill-security-scanner/blob/v0.2.0/README.md)；不包含当前主线的新完整性契约 |
-| `competition/v38-final` | 冻结参赛快照 | 仅用于历史复现，赛事成绩不代表当前主线 |
+| `main`：`v0.3.0-dev` / `v` | 未发布开发版 | 本页命令、输入模式和报告校验说明对应此版本 |
+| `v0.2.0` / `v` | 已发布 | 使用 [该版本文档](https://github.com/daffnjk/agent-skill-security-scanner/blob/v0.2.0/README.md)；不包含当前主线的新完整性契约 |
+| [冻结参赛快照](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) | 冻结参赛快照 | 仅用于历史复现，赛事成绩不代表当前主线 |
 
-从 v0.2.0 升级时，请先阅读 [安全边界与迁移说明](docs/hardening.md)。历史 v41 公开评测尚未针对当前开发版重跑。
+从 v0.2.0 升级时，请先阅读 [安全边界与迁移说明](docs/hardening.md)。历史 v 公开评测尚未针对当前开发版重跑。
 
 ## 什么是 `skillscan`？
 
@@ -72,7 +72,7 @@ Skill 目录
 - 不安全反序列化、编码载荷、动态加载和扫描规避
 - 远程更新漂移、隔离边界突破和跨平台安全配置丢失
 
-非良性结果使用 `skillscan-legacy-v41` 分类体系中的 `ast01`–`ast10`。它保留历史含义，不等同于未指定版本的 OWASP 分类；例如历史 `ast05` 仍表示反序列化与配置注入。分类及外部指令映射见 [设计文档](docs/design.md) 与 [迁移说明](docs/hardening.md)。
+非良性结果使用 `v` 分类体系中的 `ast01`–`ast10`。它保留历史含义，不等同于未指定版本的 OWASP 分类；例如历史 `ast05` 仍表示反序列化与配置注入。分类及外部指令映射见 [设计文档](docs/design.md) 与 [迁移说明](docs/hardening.md)。
 
 ## 快速开始
 
@@ -206,7 +206,7 @@ jobs:
 
 ## 公开评测
 
-以下为历史 v41 提交 `6dae4d982223e4bb6528f300f607d163a00b21d5` 的冻结评测，严格口径仅将 `malicious` 视为阳性，不代表当前 `v41-hardening.1` 的效果：
+以下为历史 v 提交 `6dae4d982223e4bb6528f300f607d163a00b21d5` 的冻结评测，严格口径仅将 `malicious` 视为阳性，不代表当前 `v` 开发引擎的效果：
 
 | 数据集 | 样本数 | 严格精确率 | 严格召回率 | 严格 F2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -216,9 +216,9 @@ jobs:
 
 这只是部分结果：完整评测中 SkillGuard v2 严格召回率为 **6.22%**，SkillTrustBench 误报率为 **47.47%**。SkillTrustBench 的 5,520 个输入中有 1,014 个非二分类标签，未计入精确率、召回率等指标。56,004 个输入中有 7 个扫描不完整，不能视为完整通过。
 
-不同数据集可能重叠，不计算跨数据集总分。完整的 TP/FP/TN/FN、误报率、准确率、完整性统计与材料化口径见 [`benchmarks/v41`](benchmarks/v41/README.md)；历史 v38 快照仍保留在 [`benchmarks/v38`](benchmarks/v38/README.md)。
+不同数据集可能重叠，不计算跨数据集总分。完整的 TP/FP/TN/FN、误报率、准确率、完整性统计与材料化口径见 [v 泛化评测基准](benchmarks/v41/README.md)；历史赛事快照仍保留在 [赛事评测基准](benchmarks/v38/README.md)。
 
-项目起源于 2026 首届火山引擎 AI 安全攻防挑战赛赛道 B。最终参赛快照保存在 [`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)，赛事得分为 **7.27 / 10**；当前 `main` 是赛后持续迭代版本，尚未在同一赛事环境中重新评测。详情见 [赛事说明](docs/competition.md)。
+项目起源于 2026 首届火山引擎 AI 安全攻防挑战赛赛道 B。最终参赛快照保存在 [冻结参赛分支](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)，赛事得分为 **7.27 / 10**；当前 `main` 是赛后持续迭代版本，尚未在同一赛事环境中重新评测。详情见 [赛事说明](docs/competition.md)。
 
 ## 边界
 
