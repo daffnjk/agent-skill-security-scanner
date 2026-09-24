@@ -243,7 +243,7 @@ func analyzeSkillV25FromBlobs(blobs []FileBlob) SkillReport {
 	}
 	findings = append(findings, analyzeCrossFile(blobs)...)
 	findings = append(findings, analyzeBinaryPerimeter(blobs)...)
-	// v38-loop5: conservative multi-file behavior-chain fusion.
+	// v-loop5: conservative multi-file behavior-chain fusion.
 	findings = append(findings, analyzeMicroCrossFile(blobs)...)
 	// v39: verify a bounded set of source -> transform -> sink relations. The
 	// original recall rules remain the candidate layer; verified chains improve
@@ -623,8 +623,8 @@ func analyzeFile(b FileBlob) []Finding {
 	if startupPersistencePayload(c, b) {
 		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true, "SKILL-R0051",
 
-			// v38-loop1: high-confidence recall micro-rules from the six rule-pack review.
-			// These only fire on concrete behavior chains and keep the original v38 thresholds intact.
+			// v-loop1: high-confidence recall micro-rules from the six rule-pack review.
+			// These only fire on concrete behavior chains and keep the original v thresholds intact.
 			0, 0})
 	}
 
@@ -637,7 +637,7 @@ func analyzeFile(b FileBlob) []Finding {
 	if microHostIsolationStrong(c, b) {
 		f = append(f, Finding{"ast06", 5.7, rel, "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure", true, "SKILL-R0054",
 
-			// v38-loop2: agent runtime configuration and remote plugin registration chains.
+			// v-loop2: agent runtime configuration and remote plugin registration chains.
 			0, 0})
 	}
 
@@ -650,7 +650,7 @@ func analyzeFile(b FileBlob) []Finding {
 	if microSimpleHotReloadRemote(c, b) {
 		f = append(f, Finding{"ast07", 5.4, rel, "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime", true, "SKILL-R0057",
 
-			// v38-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
+			// v-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
 			0, 0})
 	}
 
@@ -660,7 +660,7 @@ func analyzeFile(b FileBlob) []Finding {
 	if microExecTaintedSourceSink(c, b) {
 		f = append(f, Finding{"ast01", 5.1, rel, "command/eval sink is near user, environment, decoded, network, or manifest-controlled input", true, "SKILL-R0059",
 
-			// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
+			// v-loop4: data exposure and credential-store chains with concrete outbound sinks.
 			0, 0})
 	}
 
@@ -674,7 +674,7 @@ func analyzeFile(b FileBlob) []Finding {
 	if microBrowserWalletStoreExfil(c, b) {
 		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true, "SKILL-R0061",
 
-			// v38-loop6..15: additional high-confidence behavior chains only.
+			// v-loop6..15: additional high-confidence behavior chains only.
 			0, 0})
 	}
 
@@ -708,7 +708,7 @@ func analyzeFile(b FileBlob) []Finding {
 	if microPolicyFileTamper(c, b) {
 		f = append(f, Finding{"ast01", 5.4, rel, "skill modifies agent policy or instruction files to disable guards while enabling command/network behavior", true, "SKILL-R0071",
 
-			// v38-loop16..115: table-driven high-confidence behavior-chain recall rules.
+			// v-loop16..115: table-driven high-confidence behavior-chain recall rules.
 			0, 0})
 	}
 
@@ -1505,7 +1505,7 @@ func benignInstructionalContext(c string) bool {
 	}
 	// A disclaimer must not suppress a separate, concrete credential-to-network
 	// payload. Keep this exception deliberately narrow so ordinary security
-	// documentation and inert examples retain v41's false-positive protection.
+	// documentation and inert examples retain v's false-positive protection.
 	for _, line := range strings.Split(c, "\n") {
 		line = strings.TrimSpace(line)
 		if hasAny(line, []string{"requests.post", "requests.put", "axios.post", "fetch(", "curl -d", "webhook"}) &&
@@ -3393,8 +3393,8 @@ func analyzeFileV26(b FileBlob) []Finding {
 	if startupPersistencePayload(c, b) {
 		f = append(f, Finding{"ast01", 5.1, rel, "startup or scheduled persistence configuration launches network, shell, or downloaded payload behavior", true, "SKILL-R0051",
 
-			// v38-loop1: high-confidence recall micro-rules from the six rule-pack review.
-			// These only fire on concrete behavior chains and keep the original v38 thresholds intact.
+			// v-loop1: high-confidence recall micro-rules from the six rule-pack review.
+			// These only fire on concrete behavior chains and keep the original v thresholds intact.
 			0, 0})
 	}
 
@@ -3407,7 +3407,7 @@ func analyzeFileV26(b FileBlob) []Finding {
 	if microHostIsolationStrong(c, b) {
 		f = append(f, Finding{"ast06", 5.7, rel, "container or runtime configuration requests privileged host access, host networking, or Docker socket exposure", true, "SKILL-R0054",
 
-			// v38-loop2: agent runtime configuration and remote plugin registration chains.
+			// v-loop2: agent runtime configuration and remote plugin registration chains.
 			0, 0})
 	}
 
@@ -3420,7 +3420,7 @@ func analyzeFileV26(b FileBlob) []Finding {
 	if microSimpleHotReloadRemote(c, b) {
 		f = append(f, Finding{"ast07", 5.4, rel, "watch/hot-reload logic downloads remote module or plugin content and reloads it at runtime", true, "SKILL-R0057",
 
-			// v38-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
+			// v-loop3: lightweight source/sink proximity for Bandit-style high-risk primitives.
 			0, 0})
 	}
 
@@ -3430,7 +3430,7 @@ func analyzeFileV26(b FileBlob) []Finding {
 	if microExecTaintedSourceSink(c, b) {
 		f = append(f, Finding{"ast01", 5.1, rel, "command/eval sink is near user, environment, decoded, network, or manifest-controlled input", true, "SKILL-R0059",
 
-			// v38-loop4: data exposure and credential-store chains with concrete outbound sinks.
+			// v-loop4: data exposure and credential-store chains with concrete outbound sinks.
 			0, 0})
 	}
 
@@ -3440,7 +3440,7 @@ func analyzeFileV26(b FileBlob) []Finding {
 	if microBrowserWalletStoreExfil(c, b) {
 		f = append(f, Finding{"ast01", 5.6, rel, "browser credential store or crypto-wallet material is paired with remote upload or webhook behavior", true, "SKILL-R0061",
 
-			// v38-loop6..15: additional high-confidence behavior chains only.
+			// v-loop6..15: additional high-confidence behavior chains only.
 			0, 0})
 	}
 
