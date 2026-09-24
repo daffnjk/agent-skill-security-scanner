@@ -1,8 +1,7 @@
 # CI integration and report validation
 
-This document describes `main` (`v0.3.0-dev` / `v`). The published
-`v0.2.0` Action uses the earlier v contract; its reports do not satisfy the
-schema-v2 validator. See [hardening.md](hardening.md) for migration details and
+This document describes the current `main` development line (`v0.3.0-dev`).
+Reports from older revisions may not satisfy the current schema-v2 validator. See [hardening.md](hardening.md) for migration details and
 [README_EN.md](../README_EN.md#github-actions-gate) for a pinned workflow example.
 
 ## Output contracts

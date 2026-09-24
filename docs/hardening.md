@@ -1,7 +1,7 @@
 # Security boundaries and migration (unreleased)
 
-Release namespace: `v0.3.0-dev`. Engine namespace: `v`.
-Published `v0.2.0` / engine `v` metrics remain historical. This change does not
+This document describes the current `main` development line (`v0.3.0-dev`).
+Metrics recorded for earlier releases remain historical. This change does not
 claim a new release or a public-dataset precision/recall improvement.
 
 ## Input and output
@@ -101,7 +101,7 @@ covered. Always interpret it together with completeness and coverage.
 
 ## External instructions and taxonomy compatibility
 
-Historical categories use the `v` taxonomy. In particular historical
+Historical reports use the same `ast01`–`ast10` compatibility categories. In particular, historical
 `ast05` continues to mean deserialization/configuration-injection findings.
 It is NOT silently renamed to the current OWASP meaning.
 

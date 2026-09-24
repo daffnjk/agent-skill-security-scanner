@@ -15,15 +15,14 @@
 
 </div>
 
-## Versions and scope
+## Versions
 
-| Version | Status | Documentation |
-| --- | --- | --- |
-| `main`: `v0.3.0-dev` / `v` | Unreleased development build | Commands, input modes, and report validation on this page |
-| `v0.2.0` / `v` | Published release | [Version-specific README](https://github.com/daffnjk/agent-skill-security-scanner/blob/v0.2.0/README_EN.md); does not include the new completeness contract |
-| [Frozen competition snapshot](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) | Frozen competition snapshot | Historical reproduction only; scores do not describe current main |
+| Version | Summary |
+| --- | --- |
+| `main` (`v0.3.0-dev`) | Current development line with the latest scan-completeness, report-validation, input-mode, and CI integration changes. |
+| `v0.1.0` | Initial open-source release establishing offline static scanning, the stable four-field JSONL output, CI, and baseline documentation. |
 
-Read the [security boundaries and migration notes](docs/hardening.md) before upgrading from v0.2.0. Historical v public benchmarks have not been rerun for the current development build.
+See [CHANGELOG.md](CHANGELOG.md) for release-by-release changes. `main` is the active development line; pin a specific tag or commit for reproducible deployments.
 
 ## What is `skillscan`?
 
@@ -72,11 +71,11 @@ Report seal ───→ scan-complete.json
 - Unsafe deserialization, encoded payloads, dynamic loading, and scan evasion
 - Remote update drift, isolation-boundary risks, and lost security metadata during platform reuse
 
-Non-benign findings use `ast01`–`ast10` in the `v` taxonomy. These retain historical meanings rather than claiming conformance to an unversioned OWASP taxonomy; historical `ast05` still means deserialization/configuration injection. See the [design notes](docs/design.md) and [migration mapping](docs/hardening.md).
+Non-benign findings use a stable `ast01`–`ast10` compatibility taxonomy. Category IDs remain backward-compatible for historical reports and downstream integrations; they are not product versions and do not claim conformance to an unversioned OWASP taxonomy. For example, `ast05` continues to mean deserialization/configuration injection. See the [design notes](docs/design.md) and [migration mapping](docs/hardening.md).
 
 ## Quick start
 
-The source language floor is Go 1.23; CI, Action, and Docker builds currently pin Go 1.27.1. This builds the development version from `main`:
+The source language floor is Go 1.23; CI, Action, and Docker builds currently pin Go 1.27.1. This builds the current mainline version from `main`:
 
 ```bash
 git clone https://github.com/daffnjk/agent-skill-security-scanner.git
@@ -168,7 +167,7 @@ The `scratch` runtime runs as UID `1000` without a shell or package manager. The
 
 ## GitHub Actions gate
 
-This example pins the mainline commit containing the current completeness contract. It is a development snapshot, not `v0.2.0`. The Action uses Bash, Python 3, and a Go build environment on an Ubuntu runner:
+This example pins a current mainline commit to avoid branch drift. The Action uses Bash, Python 3, and a Go build environment on an Ubuntu runner:
 
 ```yaml
 name: Scan Agent Skills
@@ -202,11 +201,11 @@ jobs:
 | `timeout` | `5m` | Discovery and scan deadline, in Go duration format |
 | `fail_on` | `malicious` | `malicious` blocks malicious verdicts; `suspicious` blocks both suspicious and malicious verdicts; `never` disables risk blocking only |
 
-Scanner errors, incomplete coverage, and invalid reports always block. The Action does not execute target Skills. Scan complete Skill directories in PRs to preserve cross-file evidence. Step outputs include `malicious`, `suspicious`, and `benign` counts plus the `results` path, with a job summary. See the [CI integration contract](docs/v41-integration.md).
+Scanner errors, incomplete coverage, and invalid reports always block. The Action does not execute target Skills. Scan complete Skill directories in PRs to preserve cross-file evidence. Step outputs include `malicious`, `suspicious`, and `benign` counts plus the `results` path, with a job summary. See the [CI integration contract](docs/ci-integration.md).
 
 ## Public evaluation
 
-Selected historical results from frozen v commit `6dae4d982223e4bb6528f300f607d163a00b21d5`. Strict-binary metrics count only `malicious` as positive; these do not measure the current `v` development engine:
+The results below come from a historical public evaluation snapshot at commit `6dae4d982223e4bb6528f300f607d163a00b21d5`. Strict-binary metrics count only `malicious` as positive. They are retained for reproducibility and regression comparison and do not imply that current `main` has been rerun on the same datasets.
 
 | Dataset | Samples | Strict precision | Strict recall | Strict F2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -214,11 +213,11 @@ Selected historical results from frozen v commit `6dae4d982223e4bb6528f300f607d1
 | SkillTrustBench | 5,520 | 77.64% | 94.59% | 90.63% |
 | SkillsBench 1,650 | 1,650 | 38.57% | 93.33% | 72.69% |
 
-These are selected results: the full evaluation also reports **6.22%** strict recall on SkillGuard v2 and **47.47%** false-positive rate on SkillTrustBench. Of the 5,520 SkillTrustBench inputs, 1,014 non-binary labels were excluded from binary metrics. Seven of the 56,004 total inputs had incomplete scans and must not be treated as complete passes.
+The complete evaluation also records **6.22%** strict recall on SkillGuard v2, a **47.47%** false-positive rate on SkillTrustBench, and scan-completeness data. Of the 5,520 SkillTrustBench inputs, 1,014 non-binary labels were excluded from binary metrics. Seven of 56,004 total inputs had incomplete scans and must not be treated as complete passes.
 
-Datasets may overlap and are not combined into a global score. See [v generalized evaluation benchmark](benchmarks/v41/README.md) for TP/FP/TN/FN counts, false-positive rates, accuracy, completeness, and materialization notes. The historical competition snapshot remains under the [competition evaluation benchmark](benchmarks/v38/README.md).
+Datasets may overlap, so results are not combined into a global score. See [versioned benchmark snapshots](benchmarks/README.md) for TP/FP/TN/FN counts, false-positive rates, accuracy, completeness, and materialization notes.
 
-The project originated in Track B of the inaugural 2026 Volcengine AI Security Challenge. The final submission is frozen on the [competition snapshot branch](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) with a score of **7.27 / 10**. The current `main` branch is a post-competition development line and has not been re-evaluated in the same environment. See the [competition notes](docs/competition.md).
+The project originated in Track B of the inaugural 2026 Volcengine AI Security Challenge. `v0.1.0` is the initial open-source release derived from the final competition implementation; current `main` is maintained as the ongoing development line. See the [competition notes](docs/competition.md) for provenance, frozen commits, and reproduction steps.
 
 ## Limitations
 
@@ -237,7 +236,7 @@ make verify
 
 - [Security boundaries and migration](docs/hardening.md)
 - [Design and rule evolution](docs/design.md)
-- [CI integration and report validation](docs/v41-integration.md)
+- [CI integration and report validation](docs/ci-integration.md)
 - [Complete evaluation data](benchmarks/README.md)
 - [Performance and resource limits](PERFORMANCE.md)
 - [Contribution guide](CONTRIBUTING.md)

@@ -15,15 +15,14 @@
 
 </div>
 
-## 版本与适用范围
+## 版本
 
-| 版本 | 状态 | 使用说明 |
-| --- | --- | --- |
-| `main`：`v0.3.0-dev` / `v` | 未发布开发版 | 本页命令、输入模式和报告校验说明对应此版本 |
-| `v0.2.0` / `v` | 已发布 | 使用 [该版本文档](https://github.com/daffnjk/agent-skill-security-scanner/blob/v0.2.0/README.md)；不包含当前主线的新完整性契约 |
-| [冻结参赛快照](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) | 冻结参赛快照 | 仅用于历史复现，赛事成绩不代表当前主线 |
+| 版本 | 说明 |
+| --- | --- |
+| `main`（`v0.3.0-dev`） | 当前主线开发版本，包含最新的扫描完整性、报告校验、输入模式与 CI 集成能力。 |
+| `v0.1.0` | 初始开源版本，建立离线静态扫描、稳定四字段 JSONL 输出、CI 与基础文档。 |
 
-从 v0.2.0 升级时，请先阅读 [安全边界与迁移说明](docs/hardening.md)。历史 v 公开评测尚未针对当前开发版重跑。
+具体版本变更见 [CHANGELOG.md](CHANGELOG.md)。`main` 是持续开发主线；需要可复现部署时，请固定到明确的 tag 或 commit。
 
 ## 什么是 `skillscan`？
 
@@ -72,11 +71,11 @@ Skill 目录
 - 不安全反序列化、编码载荷、动态加载和扫描规避
 - 远程更新漂移、隔离边界突破和跨平台安全配置丢失
 
-非良性结果使用 `v` 分类体系中的 `ast01`–`ast10`。它保留历史含义，不等同于未指定版本的 OWASP 分类；例如历史 `ast05` 仍表示反序列化与配置注入。分类及外部指令映射见 [设计文档](docs/design.md) 与 [迁移说明](docs/hardening.md)。
+非良性结果使用稳定的 `ast01`–`ast10` 兼容分类。分类 ID 为历史报告和下游集成保持向后兼容，不代表产品版本，也不声称对应未指定版本的 OWASP 分类；例如 `ast05` 仍表示反序列化与配置注入。分类及外部指令映射见 [设计文档](docs/design.md) 与 [迁移说明](docs/hardening.md)。
 
 ## 快速开始
 
-源码语言最低要求为 Go 1.23；CI、Action 和 Docker 构建当前固定使用 Go 1.27.1。以下从 `main` 构建开发版：
+源码语言最低要求为 Go 1.23；CI、Action 和 Docker 构建当前固定使用 Go 1.27.1。以下从 `main` 构建当前主线版本：
 
 ```bash
 git clone https://github.com/daffnjk/agent-skill-security-scanner.git
@@ -168,7 +167,7 @@ docker run --rm --network none \
 
 ## GitHub Actions 门禁
 
-以下固定到包含当前完整性契约的主线提交；它是开发版快照，不是 `v0.2.0`。Action 使用 Ubuntu runner 上的 Bash、Python 3 和 Go 构建环境：
+以下示例固定到当前主线提交，避免分支漂移。Action 使用 Ubuntu runner 上的 Bash、Python 3 和 Go 构建环境：
 
 ```yaml
 name: Scan Agent Skills
@@ -202,11 +201,11 @@ jobs:
 | `timeout` | `5m` | 发现与扫描期限，采用 Go duration 格式 |
 | `fail_on` | `malicious` | `malicious` 阻断恶意判定；`suspicious` 阻断可疑和恶意判定；`never` 仅关闭风险阻断 |
 
-扫描错误、不完整覆盖和报告校验失败始终阻断。Action 不执行目标 Skill；PR 检查应扫描完整 Skill 目录，以保留跨文件关联。步骤输出包括 `malicious`、`suspicious`、`benign` 数量和 `results` 路径，并写入任务摘要。完整契约见 [CI 集成说明](docs/v41-integration.md)。
+扫描错误、不完整覆盖和报告校验失败始终阻断。Action 不执行目标 Skill；PR 检查应扫描完整 Skill 目录，以保留跨文件关联。步骤输出包括 `malicious`、`suspicious`、`benign` 数量和 `results` 路径，并写入任务摘要。完整契约见 [CI 集成说明](docs/ci-integration.md)。
 
 ## 公开评测
 
-以下为历史 v 提交 `6dae4d982223e4bb6528f300f607d163a00b21d5` 的冻结评测，严格口径仅将 `malicious` 视为阳性，不代表当前 `v` 开发引擎的效果：
+以下结果来自历史公开评测快照（提交 `6dae4d982223e4bb6528f300f607d163a00b21d5`）。严格口径仅将 `malicious` 视为阳性；这些数据用于复现和回归比较，不代表当前 `main` 已在相同数据集上重新评测。
 
 | 数据集 | 样本数 | 严格精确率 | 严格召回率 | 严格 F2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -214,11 +213,11 @@ jobs:
 | SkillTrustBench | 5,520 | 77.64% | 94.59% | 90.63% |
 | SkillsBench 1,650 | 1,650 | 38.57% | 93.33% | 72.69% |
 
-这只是部分结果：完整评测中 SkillGuard v2 严格召回率为 **6.22%**，SkillTrustBench 误报率为 **47.47%**。SkillTrustBench 的 5,520 个输入中有 1,014 个非二分类标签，未计入精确率、召回率等指标。56,004 个输入中有 7 个扫描不完整，不能视为完整通过。
+完整评测还记录了 SkillGuard v2 的严格召回率 **6.22%**、SkillTrustBench 的误报率 **47.47%**，以及扫描完整性信息。SkillTrustBench 的 5,520 个输入中有 1,014 个非二分类标签，未计入精确率、召回率等二分类指标；56,004 个输入中有 7 个扫描不完整，不能视为完整通过。
 
-不同数据集可能重叠，不计算跨数据集总分。完整的 TP/FP/TN/FN、误报率、准确率、完整性统计与材料化口径见 [v 泛化评测基准](benchmarks/v41/README.md)；历史赛事快照仍保留在 [赛事评测基准](benchmarks/v38/README.md)。
+不同数据集可能重叠，因此不计算跨数据集总分。完整的 TP/FP/TN/FN、误报率、准确率、完整性统计与材料化口径见 [版本化评测基准](benchmarks/README.md)。
 
-项目起源于 2026 首届火山引擎 AI 安全攻防挑战赛赛道 B。最终参赛快照保存在 [冻结参赛分支](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)，赛事得分为 **7.27 / 10**；当前 `main` 是赛后持续迭代版本，尚未在同一赛事环境中重新评测。详情见 [赛事说明](docs/competition.md)。
+项目起源于 2026 首届火山引擎 AI 安全攻防挑战赛赛道 B。`v0.1.0` 是初始开源版本，由最终参赛实现整理发布；当前 `main` 在此基础上持续维护。赛事背景、冻结提交和复现方式见 [赛事说明](docs/competition.md)。
 
 ## 边界
 
@@ -237,7 +236,7 @@ make verify
 
 - [安全边界与迁移说明](docs/hardening.md)
 - [设计与规则演进](docs/design.md)
-- [CI 集成与报告校验](docs/v41-integration.md)
+- [CI 集成与报告校验](docs/ci-integration.md)
 - [完整评测数据](benchmarks/README.md)
 - [性能与资源限制](PERFORMANCE.md)
 - [贡献指南](CONTRIBUTING.md)

@@ -1,7 +1,7 @@
 # Performance and resource limits
 
 `skillscan` uses the Go standard library, with no model weights or external API
-calls during scanning. This page describes `v0.3.0-dev` / `v`.
+calls during scanning. This page describes the current `main` development line (`v0.3.0-dev`).
 
 ## Current limits
 

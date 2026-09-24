@@ -2,7 +2,7 @@
 
 All notable public changes are documented here.
 
-## Unreleased — v0.3.0-dev / v
+## Unreleased — v0.3.0-dev
 
 - Enforce independent complete-scan validation and sealed, run-bound reports in GitHub Action.
 - Use exclusive randomized temporary files for all reports; reject overlapping input/output paths.
@@ -18,10 +18,10 @@ All notable public changes are documented here.
 
 ## 0.2.0 - 2026-09-03
 
-- Integrate the v Generalized Context Flow engine on top of the hardened public mainline, including bounded behavior-flow verification and context-aware Markdown, credential, update, plugin, and PII rules.
-- Preserve the stable four-field `results.jsonl` contract and move v trigger scores, rule IDs, and secondary explanations into `analysis-metadata.jsonl`.
+- Integrate generalized context-flow analysis into the hardened public mainline, including bounded behavior-flow verification and context-aware Markdown, credential, update, plugin, and PII rules.
+- Preserve the stable four-field `results.jsonl` contract and move trigger scores, rule IDs, and secondary explanations into `analysis-metadata.jsonl`.
 - Preserve fail-closed input handling and scan-completeness reporting while adding bounded executable-binary perimeter inspection.
-- Add malicious and benign counterexample tests for v rules, including HTML-comment scope, verified artifact execution, provider-matched authentication, safe YAML loading, and privacy-evasion context.
+- Add malicious and benign counterexample tests for the expanded ruleset, including HTML-comment scope, verified artifact execution, provider-matched authentication, safe YAML loading, and privacy-evasion context.
 - Add a reusable GitHub composite Action that scans complete Skill directories, fails closed on incomplete scans, and supports configurable malicious/suspicious merge gates.
 
 - Change the current `main` branch license from MIT to GNU AGPLv3 (`AGPL-3.0-only`), with separate commercial licensing available, and add contribution licensing terms. The frozen competition snapshot remains unchanged.

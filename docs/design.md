@@ -1,6 +1,6 @@
 # Scanner design
 
-This document describes the current `main` branch design (`v0.3.0-dev` / `v`). Historical
+This document describes the current `main` branch design (`v0.3.0-dev`). Historical
 competition behavior is frozen on the
 [frozen competition snapshot](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
 branch; version-to-version release details belong in [`CHANGELOG.md`](../CHANGELOG.md).
@@ -18,7 +18,7 @@ The design prioritizes:
 - deterministic results for the same scanner build and input;
 - explicit scan-completeness reporting instead of fail-open `benign` results;
 - a stable, minimal result contract for downstream integrations; and
-- category-specific evidence in the versioned `v` taxonomy.
+- category-specific evidence in a stable `ast01`–`ast10` compatibility taxonomy.
 
 The scanner is a triage tool, not a proof of safety. A `benign` verdict means that
 the inspected content did not reach the configured risk thresholds; it does not
@@ -83,9 +83,9 @@ scan-completeness enforcement
     `--> scan-complete.json (written last)
 ```
 
-The implementation still uses historical `v25` and `v26` names for the base and
-explain extractors. These are internal compatibility labels, not the current
-product version.
+Some internal extractor identifiers retain legacy compatibility names. They are
+implementation details rather than product versions and should not be used to
+describe releases.
 
 ## Input and skill discovery
 
@@ -138,7 +138,7 @@ and `strong` flag. Cross-file rules then correlate behavior that is split across
 manifests, code, lifecycle files, browser extensions, remote loaders, local
 control endpoints, and security metadata.
 
-The historical `v` taxonomy uses the categories below. These
+The compatibility taxonomy uses the categories below. These
 are not a blanket claim of conformance to an unversioned OWASP draft. External
 instruction annotations use a separate observed draft mapping, documented in
 [hardening.md](hardening.md).
@@ -307,7 +307,7 @@ ordering cases are specifically protected against regression.
 Public evaluations use frozen dataset revisions and report each dataset
 separately because their labels and samples may overlap. Dataset names, sample
 IDs, and benchmark-specific allowlists must not appear in detection rules. See
-[v generalized evaluation benchmark](../benchmarks/v41/README.md) for historical v public evidence (not a rerun of the current engine) and
+[v0.2.0 generalized evaluation snapshot](../benchmarks/v41/README.md) for historical public evidence (not a rerun of the current engine) and
 [`SELFTEST.md`](../SELFTEST.md) for portable regression coverage.
 
 ## Historical evolution
