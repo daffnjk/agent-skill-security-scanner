@@ -1,7 +1,7 @@
 # Security boundaries and migration (unreleased)
 
-Release namespace: `v0.3.0-dev`. Engine namespace: `v41-hardening.1`.
-Published `v0.2.0` / engine `v41` metrics remain historical. This change does not
+Release namespace: `v0.3.0-dev`. Engine namespace: `v`.
+Published `v0.2.0` / engine `v` metrics remain historical. This change does not
 claim a new release or a public-dataset precision/recall improvement.
 
 ## Input and output
@@ -101,7 +101,7 @@ covered. Always interpret it together with completeness and coverage.
 
 ## External instructions and taxonomy compatibility
 
-Historical categories use `skillscan-legacy-v41`. In particular historical
+Historical categories use the `v` taxonomy. In particular historical
 `ast05` continues to mean deserialization/configuration-injection findings.
 It is NOT silently renamed to the current OWASP meaning.
 
@@ -151,7 +151,7 @@ and newly introduced false positives/negatives, and source/attack/split groups.
 Assign holdouts before tuning, including source/author/time separation where
 available. Do not describe an unspecified split as independent validation.
 
-Do not tune a single global threshold from the published v41 headline scores.
+Do not tune a single global threshold from the published v headline scores.
 That snapshot includes low strict recall on SkillGuard v2 and high false
 positive rate on SkillTrustBench. Keep both boundary failures and detection
 failures visible; do not relabel an incomplete scan as a true negative.
