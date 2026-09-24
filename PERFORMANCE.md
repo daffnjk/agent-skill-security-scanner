@@ -1,7 +1,7 @@
 # Performance and resource limits
 
 `skillscan` uses the Go standard library, with no model weights or external API
-calls during scanning. This page describes `v0.3.0-dev` / `v41-hardening.1`.
+calls during scanning. This page describes `v0.3.0-dev` / `v`.
 
 ## Current limits
 
@@ -38,7 +38,7 @@ for detailed limits and trust assumptions.
 
 ## Historical benchmark
 
-The original v38 benchmark scanned a focused synthetic corpus of 4,000 Skills
+The original competition benchmark scanned a focused synthetic corpus of 4,000 Skills
 in approximately 3.8 seconds with about 21.5 MiB maximum RSS. These are historical,
 hardware-specific measurements, not current-engine performance guarantees.
 Record the scanner commit, toolchain, hardware, dataset, coverage, elapsed time,
