@@ -19,11 +19,11 @@
 
 | Version | Status | Documentation |
 | --- | --- | --- |
-| `main`: `v0.3.0-dev` / `v41-hardening.1` | Unreleased development build | Commands, input modes, and report validation on this page |
-| `v0.2.0` / `v41` | Published release | [Version-specific README](https://github.com/daffnjk/agent-skill-security-scanner/blob/v0.2.0/README_EN.md); does not include the new completeness contract |
-| `competition/v38-final` | Frozen competition snapshot | Historical reproduction only; scores do not describe current main |
+| `main`: `v0.3.0-dev` / `v` | Unreleased development build | Commands, input modes, and report validation on this page |
+| `v0.2.0` / `v` | Published release | [Version-specific README](https://github.com/daffnjk/agent-skill-security-scanner/blob/v0.2.0/README_EN.md); does not include the new completeness contract |
+| [Frozen competition snapshot](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) | Frozen competition snapshot | Historical reproduction only; scores do not describe current main |
 
-Read the [security boundaries and migration notes](docs/hardening.md) before upgrading from v0.2.0. Historical v41 public benchmarks have not been rerun for the current development build.
+Read the [security boundaries and migration notes](docs/hardening.md) before upgrading from v0.2.0. Historical v public benchmarks have not been rerun for the current development build.
 
 ## What is `skillscan`?
 
@@ -72,7 +72,7 @@ Report seal ───→ scan-complete.json
 - Unsafe deserialization, encoded payloads, dynamic loading, and scan evasion
 - Remote update drift, isolation-boundary risks, and lost security metadata during platform reuse
 
-Non-benign findings use `ast01`–`ast10` in the `skillscan-legacy-v41` taxonomy. These retain historical meanings rather than claiming conformance to an unversioned OWASP taxonomy; historical `ast05` still means deserialization/configuration injection. See the [design notes](docs/design.md) and [migration mapping](docs/hardening.md).
+Non-benign findings use `ast01`–`ast10` in the `v` taxonomy. These retain historical meanings rather than claiming conformance to an unversioned OWASP taxonomy; historical `ast05` still means deserialization/configuration injection. See the [design notes](docs/design.md) and [migration mapping](docs/hardening.md).
 
 ## Quick start
 
@@ -206,7 +206,7 @@ Scanner errors, incomplete coverage, and invalid reports always block. The Actio
 
 ## Public evaluation
 
-Selected historical results from frozen v41 commit `6dae4d982223e4bb6528f300f607d163a00b21d5`. Strict-binary metrics count only `malicious` as positive; these do not measure the current `v41-hardening.1` engine:
+Selected historical results from frozen v commit `6dae4d982223e4bb6528f300f607d163a00b21d5`. Strict-binary metrics count only `malicious` as positive; these do not measure the current `v` development engine:
 
 | Dataset | Samples | Strict precision | Strict recall | Strict F2 |
 | --- | ---: | ---: | ---: | ---: |
@@ -216,9 +216,9 @@ Selected historical results from frozen v41 commit `6dae4d982223e4bb6528f300f607
 
 These are selected results: the full evaluation also reports **6.22%** strict recall on SkillGuard v2 and **47.47%** false-positive rate on SkillTrustBench. Of the 5,520 SkillTrustBench inputs, 1,014 non-binary labels were excluded from binary metrics. Seven of the 56,004 total inputs had incomplete scans and must not be treated as complete passes.
 
-Datasets may overlap and are not combined into a global score. See [`benchmarks/v41`](benchmarks/v41/README.md) for TP/FP/TN/FN counts, false-positive rates, accuracy, completeness, and materialization notes. The historical v38 snapshot remains under [`benchmarks/v38`](benchmarks/v38/README.md).
+Datasets may overlap and are not combined into a global score. See [v generalized evaluation benchmark](benchmarks/v41/README.md) for TP/FP/TN/FN counts, false-positive rates, accuracy, completeness, and materialization notes. The historical competition snapshot remains under the [competition evaluation benchmark](benchmarks/v38/README.md).
 
-The project originated in Track B of the inaugural 2026 Volcengine AI Security Challenge. The final submission is frozen at [`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) with a score of **7.27 / 10**. The current `main` branch is a post-competition development line and has not been re-evaluated in the same environment. See the [competition notes](docs/competition.md).
+The project originated in Track B of the inaugural 2026 Volcengine AI Security Challenge. The final submission is frozen on the [competition snapshot branch](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final) with a score of **7.27 / 10**. The current `main` branch is a post-competition development line and has not been re-evaluated in the same environment. See the [competition notes](docs/competition.md).
 
 ## Limitations
 
