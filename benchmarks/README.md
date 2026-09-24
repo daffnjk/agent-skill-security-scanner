@@ -6,8 +6,8 @@
 
 当前已发布基准：
 
-- [v41 泛化评测基准](v41/README.md)：8 个同时包含正负标签的冻结数据集，补充误报率、准确率、平衡准确率及扫描完整性统计；机器可读指标见 [`v41/metrics.csv`](v41/metrics.csv)。
-- [v38 本地评测基准](v38/README.md)：13 个本地语料评估单元及独立 PoisonedSkills 正样本集；完整机器可读指标见 [`v38/metrics.csv`](v38/metrics.csv)。
+- [v 泛化评测基准](v41/README.md)：8 个同时包含正负标签的冻结数据集，补充误报率、准确率、平衡准确率及扫描完整性统计；机器可读指标见 [机器可读指标](v41/metrics.csv)。
+- [v 本地评测基准](v38/README.md)：13 个本地语料评估单元及独立 PoisonedSkills 正样本集；完整机器可读指标见 [机器可读指标](v38/metrics.csv)。
 
 每个 `benchmarks/<version>/` 目录包含：
 
