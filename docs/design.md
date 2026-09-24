@@ -1,8 +1,8 @@
 # Scanner design
 
-This document describes the current `main` branch design (`v0.3.0-dev` / `v41-hardening.1`). Historical
+This document describes the current `main` branch design (`v0.3.0-dev` / `v`). Historical
 competition behavior is frozen on the
-[`competition/v38-final`](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
+[frozen competition snapshot](https://github.com/daffnjk/agent-skill-security-scanner/tree/competition/v38-final)
 branch; version-to-version release details belong in [`CHANGELOG.md`](../CHANGELOG.md).
 
 ## Purpose and design goals
@@ -18,7 +18,7 @@ The design prioritizes:
 - deterministic results for the same scanner build and input;
 - explicit scan-completeness reporting instead of fail-open `benign` results;
 - a stable, minimal result contract for downstream integrations; and
-- category-specific evidence in the versioned `skillscan-legacy-v41` taxonomy.
+- category-specific evidence in the versioned `v` taxonomy.
 
 The scanner is a triage tool, not a proof of safety. A `benign` verdict means that
 the inspected content did not reach the configured risk thresholds; it does not
@@ -138,7 +138,7 @@ and `strong` flag. Cross-file rules then correlate behavior that is split across
 manifests, code, lifecycle files, browser extensions, remote loaders, local
 control endpoints, and security metadata.
 
-The historical `skillscan-legacy-v41` taxonomy uses the categories below. These
+The historical `v` taxonomy uses the categories below. These
 are not a blanket claim of conformance to an unversioned OWASP draft. External
 instruction annotations use a separate observed draft mapping, documented in
 [hardening.md](hardening.md).
@@ -161,7 +161,7 @@ as audit metadata and may appear as secondary evidence.
 
 ### Bounded behavior-flow verification
 
-v41 adds a small relation layer after broad recall rules. It follows selected
+v adds a small relation layer after broad recall rules. It follows selected
 Source -> Transform -> Sink paths in executable files and security-sensitive
 configuration, including exact-artifact bridges across files. It is deliberately
 bounded and is not a general parser or whole-program taint engine.
@@ -307,7 +307,7 @@ ordering cases are specifically protected against regression.
 Public evaluations use frozen dataset revisions and report each dataset
 separately because their labels and samples may overlap. Dataset names, sample
 IDs, and benchmark-specific allowlists must not appear in detection rules. See
-[`benchmarks/v41`](../benchmarks/v41/README.md) for historical v41 public evidence (not a rerun of the current engine) and
+[v generalized evaluation benchmark](../benchmarks/v41/README.md) for historical v public evidence (not a rerun of the current engine) and
 [`SELFTEST.md`](../SELFTEST.md) for portable regression coverage.
 
 ## Historical evolution
@@ -316,17 +316,17 @@ IDs, and benchmark-specific allowlists must not appear in detection rules. See
 - **v33-v34:** combined profile collection into one filesystem pass and added
   bounded head/tail sampling, UTF-16 handling, and format-specific hardening.
 - **v35:** stabilized the four-field result schema and narrowed permission parsing.
-- **v36-v38:** added compound, recall-oriented rules for Agentic Skills Top 10
-  behaviors while retaining specificity guards; v38 is the frozen competition
+- **Earlier v:** added compound, recall-oriented rules for Agentic Skills Top 10
+  behaviors while retaining specificity guards; the competition snapshot is the frozen competition
   submission.
 - **v39:** added bounded Source -> Transform -> Sink relation verification and
   narrow safe-flow dampening.
 - **v40:** made the base verdict provenance explicit: explain-only findings cannot
   rewrite an already non-benign result.
-- **v41:** integrated the relation layer with fail-closed collection, executable
+- **v:** integrated the relation layer with fail-closed collection, executable
   perimeter inspection, analysis metadata, regression calibration, and the GitHub
   pull-request gate.
-- **v41-hardening.1 (unreleased):** adds explicit input modes, strict content and
+- **v (unreleased):** adds explicit input modes, strict content and
   analysis coverage, sealed reports, stable rule IDs, scanner identity, and offline
   external instruction inventory. Public benchmarks have not been rerun.
 
